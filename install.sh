@@ -10,6 +10,7 @@
 #   ./install.sh --no-vault          # installe tout mais ne clone rien / pas de vault Obsidian
 #   ./install.sh --vault-only        # pas d'install, juste clé SSH + clonage/config du vault
 #   SSH_KEY_COMMENT="you@example.com" REPO_URL="git@github.com:user/repo.git" ./install.sh
+#   GIT_USER_NAME="Ton Nom" GIT_USER_EMAIL="you@example.com" ./install.sh   # évite les prompts interactifs
 #
 set -euo pipefail
 
@@ -19,7 +20,7 @@ set -euo pipefail
 SSH_KEY_TYPE="ed25519"
 SSH_KEY_COMMENT="${SSH_KEY_COMMENT:-helpjudesavetheworld@gmail.com}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_${SSH_KEY_TYPE}}"
-REPO_URL="${REPO_URL:-}"
+REPO_URL="${REPO_URL:-git@github.com:Abla-Adem/sync-personal-doc.git}"
 VAULT_PATH="${VAULT_PATH:-}"
 
 SKIP_INSTALL=false
@@ -323,10 +324,42 @@ generate_ssh_key() {
   echo "GitHub  -> https://github.com/settings/ssh/new"
   echo "GitLab  -> https://gitlab.com/-/profile/keys"
   echo
-  echo "Ensuite configure git avec :"
-  echo "  git config --global user.name  \"Ton Nom\""
-  echo "  git config --global user.email \"$SSH_KEY_COMMENT\""
-  echo
+}
+
+# ---------------------------------------------------------------------------
+# Identité Git globale (user.name / user.email) — interactif avec défauts
+# ---------------------------------------------------------------------------
+configure_git_identity() {
+  local current_name current_email default_name default_email name email
+
+  current_name=$(git config --global user.name 2>/dev/null || true)
+  current_email=$(git config --global user.email 2>/dev/null || true)
+
+  default_name="${GIT_USER_NAME:-$current_name}"
+  default_email="${GIT_USER_EMAIL:-${current_email:-$SSH_KEY_COMMENT}}"
+
+  if [[ -n "${GIT_USER_NAME:-}" ]]; then
+    name="$GIT_USER_NAME"
+  else
+    read -rp "Nom Git (user.name) [défaut: ${default_name:-<vide, obligatoire>}] : " name
+    name="${name:-$default_name}"
+  fi
+
+  if [[ -n "${GIT_USER_EMAIL:-}" ]]; then
+    email="$GIT_USER_EMAIL"
+  else
+    read -rp "Email Git (user.email) [défaut: $default_email] : " email
+    email="${email:-$default_email}"
+  fi
+
+  if [[ -z "$name" ]]; then
+    warn "Aucun nom fourni, git config --global user.name laissé tel quel."
+  else
+    git config --global user.name "$name"
+  fi
+  git config --global user.email "$email"
+
+  log "Git configuré : user.name=\"$(git config --global user.name 2>/dev/null)\", user.email=\"$(git config --global user.email)\""
 }
 
 # ---------------------------------------------------------------------------
@@ -445,6 +478,7 @@ main() {
   fi
 
   generate_ssh_key
+  configure_git_identity
 
   if [[ "$SKIP_VAULT" == false ]]; then
     setup_obsidian_vault

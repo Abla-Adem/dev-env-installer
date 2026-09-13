@@ -63,7 +63,7 @@ SKIP_VAULT=false
 |---|---|---|
 | `SSH_KEY_COMMENT` | `helpjudesavetheworld@gmail.com` | Commentaire embarqué dans la clé SSH (généralement ton email) |
 | `SSH_KEY_PATH` | `~/.ssh/id_ed25519` | Emplacement de la clé privée/publique |
-| `REPO_URL` | *(vide → prompt interactif)* | URL du dépôt Git à cloner comme coffre-fort |
+| `REPO_URL` | `git@github.com:Abla-Adem/sync-personal-doc.git` | URL du dépôt Git à cloner comme coffre-fort (surchargeable) |
 | `VAULT_PATH` | *(vide → prompt, puis `~/Documents/<nom-du-repo>`)* | Dossier local du vault |
 
 Exemple pour tout piloter sans aucune interaction :
@@ -176,7 +176,7 @@ Boucle `until` : tant que `test_ssh_auth` échoue, le script **attend une action
 
 Étapes dans l'ordre :
 
-1. **Récupère l'URL du repo** (`$REPO_URL` ou prompt). Vide → étape entièrement sautée.
+1. **Récupère l'URL du repo** (`$REPO_URL`, par défaut `git@github.com:Abla-Adem/sync-personal-doc.git`, ou prompt si explicitement vidé). Vide → étape entièrement sautée.
 2. **Détecte le protocole** : si l'URL commence par `git@` ou `ssh://git@`, extrait le nom d'hôte par regex (`sed -E 's#^(git@|ssh://git@)([^:/]+).*#\2#'`) et appelle `wait_for_git_ssh` dessus. Sinon (HTTPS), avertit que Git pourra demander un identifiant/token.
 3. **Détermine le dossier local** : `$VAULT_PATH` ou prompt, défaut `~/Documents/<nom-du-repo>` (nom extrait via `basename -s .git`).
 4. **Clone ou met à jour** :
@@ -227,9 +227,11 @@ La procédure est **la même** que sur la première machine, avec un point impor
    chmod +x install.sh
    ```
 
-2. **Lancer le script** avec l'URL du dépôt du coffre-fort :
+2. **Lancer le script** — l'URL du coffre-fort est déjà en valeur par défaut (`git@github.com:Abla-Adem/sync-personal-doc.git`), donc un simple `./install.sh` suffit. Pour cloner un autre dépôt, surcharger `REPO_URL` :
    ```bash
-   REPO_URL="git@github.com:<user>/<vault-repo>.git" ./install.sh
+   ./install.sh
+   # ou pour un autre dépôt :
+   REPO_URL="git@github.com:<user>/<autre-repo>.git" ./install.sh
    ```
 
 3. Le script génère une **nouvelle** clé SSH (propre à cette machine, puisque `~/.ssh/id_ed25519` n'existe pas encore dessus) et l'affiche.
