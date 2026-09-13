@@ -1,0 +1,86 @@
+---
+# Équivalent de setup_obsidian_vault() + urlencode() dans bash/install.sh
+- name: Demander l'URL du dépôt si non définie
+  ansible.builtin.pause:
+    prompt: "URL du dépôt Git à cloner comme coffre-fort Obsidian (laisser vide pour ignorer)"
+  register: repo_url_prompt
+  when: repo_url | length == 0
+
+- name: Déterminer l'URL effective du dépôt
+  ansible.builtin.set_fact:
+    effective_repo_url: "{{ repo_url if repo_url | length > 0 else (repo_url_prompt.user_input | default('')) }}"
+
+- name: Coffre-fort Obsidian
+  when: effective_repo_url | length > 0
+  block:
+    - name: Extraire l'hôte SSH de l'URL (si git@ ou ssh://git@)
+      ansible.builtin.set_fact:
+        ssh_host: "{{ effective_repo_url | regex_replace('^(git@|ssh://git@)([^:/]+).*$', '\\2') }}"
+      when: effective_repo_url is match("^(git@|ssh://git@)")
+
+    - name: Attendre que la clé SSH soit reconnue par l'hébergeur
+      ansible.builtin.include_tasks: wait_for_git_ssh.yml
+      when: ssh_host is defined
+
+    - name: Avertir si URL non-SSH (pas de vérification possible)
+      ansible.builtin.debug:
+        msg: "URL non-SSH détectée, pas de vérification de clé SSH (Git pourra demander un identifiant/token)."
+      when: ssh_host is not defined
+
+    - name: Déterminer le chemin local du vault
+      ansible.builtin.set_fact:
+        effective_vault_path: "{{ vault_path if vault_path | length > 0 else ansible_env.HOME + '/Documents/' + (effective_repo_url | basename | regex_replace('\\.git$', '')) }}"
+
+    - name: Cloner ou mettre à jour le dépôt (ansible.builtin.git gère les deux cas nativement)
+      ansible.builtin.git:
+        repo: "{{ effective_repo_url }}"
+        dest: "{{ effective_vault_path }}"
+        accept_hostkey: true
+        update: true
+      become: false
+
+    - name: Créer le dossier .obsidian (reconnu comme coffre-fort)
+      ansible.builtin.file:
+        path: "{{ effective_vault_path }}/.obsidian"
+        state: directory
+      become: false
+
+    - name: Tenter d'ouvrir le coffre-fort dans Obsidian (macOS)
+      ansible.builtin.shell: "open 'obsidian://open?path={{ effective_vault_path | urlencode }}'"
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+      failed_when: false
+      changed_when: false
+
+    - name: Tenter d'ouvrir le coffre-fort dans Obsidian (Linux avec xdg-open)
+      ansible.builtin.command: which xdg-open
+      register: xdg_open_check
+      become: false
+      changed_when: false
+      failed_when: false
+      when: ansible_facts['os_family'] != "Darwin"
+
+    - name: Ouvrir via xdg-open
+      ansible.builtin.shell: "xdg-open 'obsidian://open?path={{ effective_vault_path | urlencode }}'"
+      become: false
+      when:
+        - ansible_facts['os_family'] != "Darwin"
+        - xdg_open_check is defined
+        - xdg_open_check.rc == 0
+      failed_when: false
+      changed_when: false
+
+    - name: Avertir si pas d'ouverture automatique possible
+      ansible.builtin.debug:
+        msg: >-
+          Impossible d'ouvrir Obsidian automatiquement depuis ce shell.
+          Ouvre Obsidian -> 'Open folder as vault' -> sélectionne : {{ effective_vault_path }}
+      when:
+        - ansible_facts['os_family'] != "Darwin"
+        - xdg_open_check is defined
+        - xdg_open_check.rc != 0
+
+- name: Aucune URL fournie
+  ansible.builtin.debug:
+    msg: "Aucune URL fournie, étape du coffre-fort Obsidian ignorée."
+  when: effective_repo_url | length == 0

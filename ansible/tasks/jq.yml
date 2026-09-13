@@ -1,0 +1,15 @@
+---
+# Équivalent de install_jq() dans bash/install.sh — un seul module cross-OS pour Linux,
+# Homebrew pour macOS (package ne gère pas Homebrew).
+- name: "macOS: jq via Homebrew"
+  community.general.homebrew:
+    name: jq
+    state: present
+  become: false
+  when: ansible_facts['os_family'] == "Darwin"
+
+- name: "Linux: jq via le gestionnaire de paquets natif"
+  ansible.builtin.package:
+    name: jq
+    state: present
+  when: ansible_facts['os_family'] != "Darwin"

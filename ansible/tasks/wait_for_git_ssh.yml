@@ -1,0 +1,42 @@
+---
+# Équivalent de test_ssh_auth() + wait_for_git_ssh() dans bash/install.sh.
+# Ansible n'a pas de primitive native pour "bloque et attends une action
+# humaine, puis retente" (le module `until`/`retries` poll automatiquement
+# sans pause interactive) — on la reconstruit avec pause + include_tasks
+# récursif. Attend une variable "ssh_host" définie par l'appelant.
+
+- name: "Tester l'authentification SSH vers {{ ssh_host }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -T git@{{ ssh_host }} 2>&1 \
+      | grep -qiE "successfully authenticated|welcome to gitlab"
+  args:
+    executable: /bin/bash
+  register: ssh_auth_test
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Attendre que la clé SSH soit ajoutée sur l'hébergeur
+  when: ssh_auth_test.rc != 0
+  block:
+    - name: Instructions
+      ansible.builtin.debug:
+        msg:
+          - "Authentification SSH vers {{ ssh_host }} pas encore fonctionnelle."
+          - "1) Copie la clé publique affichée plus haut ({{ ssh_key_path }}.pub)"
+          - "2) Ajoute-la sur https://{{ ssh_host }}/ (paramètres SSH de ton compte)"
+
+    - name: Attendre une action humaine
+      ansible.builtin.pause:
+        prompt: "Appuie sur [Entrée] une fois fait pour réessayer (ou tape 'skip' pour ignorer)"
+      register: wait_ssh_prompt
+
+    - name: Réessayer (récursif, comme la boucle 'until' en bash)
+      ansible.builtin.include_tasks: wait_for_git_ssh.yml
+      when: (wait_ssh_prompt.user_input | default('')) != 'skip'
+
+    - name: Vérification ignorée
+      ansible.builtin.debug:
+        msg: "Vérification SSH ignorée, le clonage risque d'échouer si la clé n'est pas configurée."
+      when: (wait_ssh_prompt.user_input | default('')) == 'skip'

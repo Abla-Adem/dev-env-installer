@@ -1,0 +1,14 @@
+---
+# Équivalent de ensure_brew() dans bash/install.sh
+- name: Vérifier si Homebrew est installé
+  ansible.builtin.command: brew --version
+  register: brew_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Homebrew si absent
+  ansible.builtin.shell: |
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  when: brew_check.rc != 0
+  become: false

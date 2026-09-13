@@ -16,13 +16,13 @@ chmod +x install.sh
 ./install.sh
 ```
 
-## [`ansible/`](./ansible) — démo, pour comparaison
+## [`ansible/`](./ansible) — parité complète, non testée
 
-Un playbook Ansible qui réécrit **une partie** du script bash en version déclarative, pour montrer à quoi ça ressemblerait avec un outil différent. **N'a pas été exécuté en conditions réelles** et ne couvre pas tous les outils.
+Un playbook Ansible qui reprend **toutes** les fonctions du script bash (mêmes outils, mêmes flags via des variables `-e`). **N'a jamais été exécuté** (pas d'accès root disponible pour installer Ansible dans l'environnement où il a été écrit) — relu à la main, modules vérifiés un par un, mais aucune garantie qu'il tourne sans accroc du premier coup.
 
-→ **[Voir `ansible/README.md`](./ansible/README.md)** pour le détail et un tableau comparatif bash vs Ansible.
+→ **[Voir `ansible/README.md`](./ansible/README.md)** pour la table de correspondance des flags et les quelques différences de fond (assistants interactifs AWS/GCP notamment).
 
 ## Lequel choisir ?
 
-- **Tu veux juste que ça marche, maintenant, sans rien installer d'autre au préalable** → `bash/install.sh`.
-- **Tu es curieux de voir comment ce serait en Ansible, ou tu gères déjà un parc de machines avec Ansible** → regarde `ansible/`, mais attends-toi à devoir le compléter/tester avant de t'en servir pour de vrai.
+- **Tu veux que ça marche, maintenant** → `bash/install.sh`. C'est celui qui a réellement tourné, dont les bugs trouvés en testant ont été corrigés.
+- **Tu gères déjà un parc de machines avec Ansible, ou tu préfères ce style** → `ansible/`, mais lance-le d'abord sur une machine sacrifiable et relis `ansible/README.md` avant de t'y fier.

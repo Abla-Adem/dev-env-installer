@@ -1,0 +1,48 @@
+---
+# Équivalent de ensure_npm() + install_claude_code() dans bash/install.sh
+- name: Vérifier si npm est installé
+  ansible.builtin.command: which npm
+  register: npm_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Node.js/npm si absent
+  when: npm_check.rc != 0
+  block:
+    - community.general.homebrew:
+        name: node
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - ansible.builtin.package:
+        name:
+          - nodejs
+          - npm
+        state: present
+      when: ansible_facts['os_family'] != "Darwin"
+
+- name: Vérifier si Claude Code CLI est déjà installé
+  ansible.builtin.command: which claude
+  register: claude_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: "macOS: installer Claude Code CLI (npm, sans sudo)"
+  community.general.npm:
+    name: "@anthropic-ai/claude-code"
+    global: true
+  become: false
+  when:
+    - claude_check.rc != 0
+    - ansible_facts['os_family'] == "Darwin"
+
+- name: "Linux: installer Claude Code CLI (npm, avec sudo)"
+  community.general.npm:
+    name: "@anthropic-ai/claude-code"
+    global: true
+  when:
+    - claude_check.rc != 0
+    - ansible_facts['os_family'] != "Darwin"

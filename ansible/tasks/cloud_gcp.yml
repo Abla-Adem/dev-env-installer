@@ -1,0 +1,42 @@
+---
+# Équivalent de configure_gcp() dans bash/install.sh.
+# Différence importante : `gcloud init` déclenche un flux OAuth navigateur
+# multi-étapes (ouvrir une URL, coller un code, choisir un projet) qu'Ansible
+# ne peut pas piloter automatiquement (ni via command/shell — stdin fermé —
+# ni via un simple templating de fichier comme pour AWS). On se contente donc
+# de vérifier l'état et d'inviter à lancer `gcloud init` manuellement.
+
+- name: Vérifier si gcloud est installé
+  ansible.builtin.command: which gcloud
+  register: gcloud_bin_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Configuration GCP
+  when: gcloud_bin_check.rc == 0
+  become: false
+  block:
+    - name: Vérifier si un compte gcloud est déjà actif
+      ansible.builtin.command: gcloud auth list --filter=status:ACTIVE --format=value(account)
+      register: gcloud_identity
+      changed_when: false
+      failed_when: false
+
+    - name: gcloud déjà authentifié
+      ansible.builtin.debug:
+        msg: "gcloud déjà authentifié ({{ gcloud_identity.stdout }}), skip."
+      when: gcloud_identity.stdout | trim | length > 0
+
+    - name: Inviter à lancer gcloud init manuellement
+      ansible.builtin.debug:
+        msg: >-
+          Aucun compte gcloud actif. Lance `gcloud init` toi-même dans un terminal
+          (connexion navigateur + choix du projet) — Ansible ne peut pas piloter
+          ce flux interactif OAuth.
+      when: gcloud_identity.stdout | trim | length == 0
+
+- name: gcloud non installé
+  ansible.builtin.debug:
+    msg: "gcloud CLI non installé, configuration GCP ignorée."
+  when: gcloud_bin_check.rc != 0

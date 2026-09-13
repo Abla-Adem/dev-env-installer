@@ -1,126 +1,105 @@
 ---
-# Démo Ansible équivalente à une PARTIE de install.sh — pas une réécriture
-# complète (Obsidian, gcloud, kubectl, Helm, boto3, etc. suivraient le même
-# principe mais alourdiraient cette démo). But : montrer la différence de
-# forme avec le script bash.
+# Parité complète avec bash/install.sh — voir README.md de ce dossier pour
+# la table de correspondance flags bash <-> variables Ansible.
 #
-# Lancer avec :
+# Lancer :
 #   ansible-galaxy collection install -r requirements.yml
 #   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
 
-- name: Provisionner un poste de dev
+- name: Provisionner un poste de dev (parité avec bash/install.sh)
   hosts: local
   become: true
 
-  vars:
-    git_user_name: "Abla-Adem"
-    git_user_email: "ablaadem3@gmail.com"
-    ssh_key_path: "{{ ansible_env.HOME }}/.ssh/id_ed25519"
+  pre_tasks:
+    - name: Traduire les flags de haut niveau en skip_* (équivalent du parsing d'arguments bash)
+      ansible.builtin.set_fact:
+        skip_install: "{{ ssh_only or vault_only or cloud_only or extras_only }}"
+        skip_ssh: "{{ cloud_only or extras_only }}"
+        skip_cloud: "{{ ssh_only or vault_only or extras_only or no_cloud }}"
+        skip_vault: "{{ ssh_only or cloud_only or extras_only or no_vault }}"
+
+    - name: Déterminer le style d'architecture (équivalent du $ARCH bash)
+      ansible.builtin.set_fact:
+        arch_amd64_style: "{{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}"
+        arch_x86_64_style: "{{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'x86_64' }}"
+
+    - name: Système détecté (équivalent de detect_pkg_manager())
+      ansible.builtin.debug:
+        msg: "OS={{ ansible_facts['os_family'] }} arch={{ ansible_facts['architecture'] }} skip_install={{ skip_install }} skip_ssh={{ skip_ssh }} skip_cloud={{ skip_cloud }} skip_vault={{ skip_vault }} extras_only={{ extras_only }}"
 
   tasks:
-    # -------------------------------------------------------------------
-    # 1. Paquets simples, disponibles nativement sur toutes les distros
-    #    Linux (apt/dnf/pacman) — un seul module au lieu d'un `case` par OS.
-    # -------------------------------------------------------------------
-    - name: Installer jq, direnv, shellcheck (Linux)
-      ansible.builtin.package:
-        name:
-          - jq
-          - direnv
-          - shellcheck
-        state: present
-      when: ansible_facts['os_family'] != "Darwin"
-
-    - name: Installer jq, direnv, shellcheck (macOS)
-      community.general.homebrew:
-        name:
-          - jq
-          - direnv
-          - shellcheck
-        state: present
-      become: false
-      when: ansible_facts['os_family'] == "Darwin"
-
-    # -------------------------------------------------------------------
-    # 2. Outil nécessitant un dépôt tiers (équivalent du bloc apt/dnf de
-    #    install_vscode() dans le script bash) — ici juste pour Debian/Ubuntu.
-    # -------------------------------------------------------------------
-    - name: VS Code — ajouter le dépôt et installer (Debian/Ubuntu)
-      when: ansible_facts['os_family'] == "Debian"
+    # -----------------------------------------------------------------
+    # Équivalent de : if EXTRAS_ONLY == true; then run_extras_only; return; fi
+    # -----------------------------------------------------------------
+    - name: Mode --extras-only
+      when: extras_only | bool
       block:
-        - name: Ajouter la clé GPG Microsoft
-          ansible.builtin.apt_key:
-            url: https://packages.microsoft.com/keys/microsoft.asc
-            state: present
+        - name: Homebrew (macOS, requis avant tout le reste)
+          ansible.builtin.include_tasks: tasks/ensure_brew.yml
+          when: ansible_facts['os_family'] == "Darwin"
 
-        - name: Ajouter le dépôt VS Code
-          ansible.builtin.apt_repository:
-            repo: "deb [arch=amd64,arm64,armhf] https://packages.microsoft.com/repos/code stable main"
-            state: present
-            filename: vscode
+        - ansible.builtin.include_tasks: tasks/extras_only.yml
 
-        - name: Installer VS Code
-          ansible.builtin.apt:
-            name: code
-            state: present
-            update_cache: true
+    # -----------------------------------------------------------------
+    # Équivalent de : if SKIP_INSTALL == false; then ... fi
+    # -----------------------------------------------------------------
+    - name: Installation des outils
+      when: not (skip_install | bool)
+      block:
+        - name: Homebrew (macOS)
+          ansible.builtin.include_tasks: tasks/ensure_brew.yml
+          when: ansible_facts['os_family'] == "Darwin"
 
-    - name: VS Code et Docker (macOS, via Homebrew Cask)
-      community.general.homebrew_cask:
-        name:
-          - visual-studio-code
-          - docker
-        state: present
-      become: false
-      when: ansible_facts['os_family'] == "Darwin"
+        - ansible.builtin.include_tasks: tasks/vscode.yml
+        - ansible.builtin.include_tasks: tasks/obsidian.yml
+        - ansible.builtin.include_tasks: tasks/terraform.yml
+        - ansible.builtin.include_tasks: tasks/awscli.yml
+        - ansible.builtin.include_tasks: tasks/aws_sdk.yml
+        - ansible.builtin.include_tasks: tasks/gcloud.yml
+        - ansible.builtin.include_tasks: tasks/gcp_sdk.yml
+        - ansible.builtin.include_tasks: tasks/docker.yml
+        - ansible.builtin.include_tasks: tasks/kubectl.yml
+        - ansible.builtin.include_tasks: tasks/helm.yml
+        - ansible.builtin.include_tasks: tasks/jq.yml
+        - ansible.builtin.include_tasks: tasks/claude_code.yml
 
-    # -------------------------------------------------------------------
-    # 3. Clé SSH — un seul module idempotent, pas de `if [[ -f ... ]]` manuel.
-    # -------------------------------------------------------------------
-    - name: Générer la clé SSH si elle n'existe pas déjà
-      community.crypto.openssh_keypair:
-        path: "{{ ssh_key_path }}"
-        type: ed25519
-        comment: "{{ git_user_email }}"
-      become: false
-      register: ssh_key
+        - name: Outils optionnels (--with-extras)
+          ansible.builtin.include_tasks: tasks/optional_tool_install.yml
+          loop: "{{ optional_tools }}"
+          loop_control:
+            loop_var: tool
+          vars:
+            tool_name: "{{ tool.name }}"
+          when: with_extras | bool
 
-    - name: Afficher la clé publique
-      ansible.builtin.debug:
-        msg: "{{ lookup('file', ssh_key_path + '.pub') }}"
+    # -----------------------------------------------------------------
+    # Équivalent de : if SKIP_SSH == false; then generate_ssh_key; configure_git_identity; fi
+    # -----------------------------------------------------------------
+    - name: Clé SSH et identité git
+      when: not (skip_ssh | bool)
+      block:
+        - ansible.builtin.include_tasks: tasks/ssh_key.yml
+        - ansible.builtin.include_tasks: tasks/git_identity.yml
 
-    # -------------------------------------------------------------------
-    # 4. Identité Git globale — module dédié plutôt que des `git config`
-    #    appelés à la main.
-    # -------------------------------------------------------------------
-    - name: Configurer git user.name
-      community.general.git_config:
-        name: user.name
-        scope: global
-        value: "{{ git_user_name }}"
-      become: false
+    # -----------------------------------------------------------------
+    # Équivalent de : if SKIP_CLOUD == false; then configure_aws; configure_gcp; fi
+    # -----------------------------------------------------------------
+    - name: Configuration AWS / GCP
+      when: not (skip_cloud | bool)
+      block:
+        - ansible.builtin.include_tasks: tasks/cloud_aws.yml
+        - ansible.builtin.include_tasks: tasks/cloud_gcp.yml
 
-    - name: Configurer git user.email
-      community.general.git_config:
-        name: user.email
-        scope: global
-        value: "{{ git_user_email }}"
-      become: false
+    # -----------------------------------------------------------------
+    # Équivalent de : if SKIP_VAULT == false; then setup_obsidian_vault; fi
+    # -----------------------------------------------------------------
+    - name: Coffre-fort Obsidian
+      ansible.builtin.include_tasks: tasks/vault.yml
+      when: not (skip_vault | bool)
 
-    # -------------------------------------------------------------------
-    # 5. Clonage du vault Obsidian — équivalent de setup_obsidian_vault().
-    #    Ansible attend juste que le hôte SSH soit joignable ; il ne gère
-    #    pas l'attente interactive "ajoute ta clé sur GitHub" du script bash.
-    # -------------------------------------------------------------------
-    - name: Cloner le coffre-fort Obsidian
-      ansible.builtin.git:
-        repo: "git@github.com:Abla-Adem/sync-personal-doc.git"
-        dest: "{{ ansible_env.HOME }}/Documents/sync-personal-doc"
-        accept_hostkey: true
-      become: false
-
-    - name: Créer le dossier .obsidian (reconnu comme vault)
-      ansible.builtin.file:
-        path: "{{ ansible_env.HOME }}/Documents/sync-personal-doc/.obsidian"
-        state: directory
-      become: false
+    # -----------------------------------------------------------------
+    # Équivalent de : if SKIP_INSTALL == false; then print_optional_tools_summary; fi
+    # -----------------------------------------------------------------
+    - name: Résumé des outils optionnels manquants
+      ansible.builtin.include_tasks: tasks/optional_tools_summary.yml
+      when: not (skip_install | bool)

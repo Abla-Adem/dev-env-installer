@@ -1,0 +1,23 @@
+---
+# Équivalent de install_helm() dans bash/install.sh
+- name: Vérifier si Helm est déjà installé
+  ansible.builtin.command: which helm
+  register: helm_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: "macOS: Helm via Homebrew"
+  community.general.homebrew:
+    name: helm
+    state: present
+  become: false
+  when:
+    - helm_check.rc != 0
+    - ansible_facts['os_family'] == "Darwin"
+
+- name: "Linux: script officiel get-helm-3"
+  ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  when:
+    - helm_check.rc != 0
+    - ansible_facts['os_family'] != "Darwin"

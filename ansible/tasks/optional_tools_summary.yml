@@ -1,0 +1,24 @@
+---
+# Équivalent de print_optional_tools_summary() dans bash/install.sh
+- name: Vérifier quels outils optionnels sont installés
+  ansible.builtin.command: "which {{ item.name }}"
+  register: optional_tools_check
+  changed_when: false
+  failed_when: false
+  become: false
+  loop: "{{ optional_tools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Construire la liste des outils manquants
+  ansible.builtin.set_fact:
+    missing_optional_tools: "{{ optional_tools_check.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+
+- name: Afficher les outils optionnels non installés
+  ansible.builtin.debug:
+    msg: >-
+      Outils optionnels non installés (utiles mais pas obligatoires) :
+      {{ missing_optional_tools | map(attribute='name') | join(', ') }}.
+      Pour tous les installer : -e with_extras=true.
+      Pour en choisir : -e extras_only=true.
+  when: missing_optional_tools | length > 0

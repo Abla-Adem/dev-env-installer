@@ -1,0 +1,45 @@
+---
+# Équivalent de install_gcp_sdk() dans bash/install.sh
+- ansible.builtin.include_tasks: ensure_pip3.yml
+
+- name: Vérifier si googleapiclient est déjà importable
+  ansible.builtin.command: python3 -c "import googleapiclient"
+  register: gcp_sdk_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer le SDK GCP (pip --user)
+  ansible.builtin.pip:
+    name:
+      - google-api-python-client
+      - google-auth
+      - google-auth-httplib2
+      - google-auth-oauthlib
+    extra_args: --user
+  become: false
+  register: gcp_sdk_install
+  failed_when: false
+  when: gcp_sdk_check.rc != 0
+
+- name: "Réessayer avec --break-system-packages (PEP 668)"
+  ansible.builtin.pip:
+    name:
+      - google-api-python-client
+      - google-auth
+      - google-auth-httplib2
+      - google-auth-oauthlib
+    extra_args: --user --break-system-packages
+  become: false
+  when:
+    - gcp_sdk_check.rc != 0
+    - gcp_sdk_install is failed
+    - "'externally-managed-environment' in (gcp_sdk_install.msg | default('') ~ (gcp_sdk_install.stderr | default('')))"
+
+- name: Échouer si l'échec initial n'était pas lié à PEP 668
+  ansible.builtin.fail:
+    msg: "{{ gcp_sdk_install.msg }}"
+  when:
+    - gcp_sdk_check.rc != 0
+    - gcp_sdk_install is failed
+    - "'externally-managed-environment' not in (gcp_sdk_install.msg | default('') ~ (gcp_sdk_install.stderr | default('')))"

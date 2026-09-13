@@ -1,0 +1,55 @@
+---
+# Équivalent de configure_git_identity() dans bash/install.sh — interactif,
+# avec défauts (config git déjà existante, sinon les vars du groupe).
+- name: Détecter le user.name git actuel
+  ansible.builtin.command: git config --global user.name
+  register: current_git_name
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Détecter le user.email git actuel
+  ansible.builtin.command: git config --global user.email
+  register: current_git_email
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Déterminer les valeurs par défaut
+  ansible.builtin.set_fact:
+    default_git_name: "{{ current_git_name.stdout if current_git_name.rc == 0 and current_git_name.stdout | length > 0 else git_user_name }}"
+    default_git_email: "{{ current_git_email.stdout if current_git_email.rc == 0 and current_git_email.stdout | length > 0 else git_user_email }}"
+
+- name: "Demander le nom Git (Entrée = garder le défaut affiché)"
+  ansible.builtin.pause:
+    prompt: "Nom Git (user.name) [défaut: {{ default_git_name }}]"
+  register: git_name_prompt
+
+- name: "Demander l'email Git (Entrée = garder le défaut affiché)"
+  ansible.builtin.pause:
+    prompt: "Email Git (user.email) [défaut: {{ default_git_email }}]"
+  register: git_email_prompt
+
+- name: Déterminer les valeurs finales
+  ansible.builtin.set_fact:
+    final_git_name: "{{ (git_name_prompt.user_input | default('')) | trim | default(default_git_name, true) }}"
+    final_git_email: "{{ (git_email_prompt.user_input | default('')) | trim | default(default_git_email, true) }}"
+
+- name: Configurer git user.name
+  community.general.git_config:
+    name: user.name
+    scope: global
+    value: "{{ final_git_name }}"
+  become: false
+  when: final_git_name | length > 0
+
+- name: Configurer git user.email
+  community.general.git_config:
+    name: user.email
+    scope: global
+    value: "{{ final_git_email }}"
+  become: false
+
+- name: Confirmer la configuration
+  ansible.builtin.debug:
+    msg: 'Git configuré : user.name="{{ final_git_name }}", user.email="{{ final_git_email }}"'

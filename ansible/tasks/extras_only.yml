@@ -1,0 +1,44 @@
+---
+# Équivalent de select_extras_interactive() + run_extras_only() dans bash/install.sh.
+# Différence avec le menu numéroté bash : ici on tape les noms directement
+# (pas de "2,4"), Ansible n'a pas de primitive de menu numéroté interactif.
+
+- name: Demander quels outils optionnels installer (si extras_only_list non fourni)
+  ansible.builtin.pause:
+    prompt: |
+      Outils disponibles : {{ optional_tools | map(attribute='name') | join(', ') }}
+      Lesquels installer ? (séparés par des virgules, ou 'all' pour tous)
+  register: extras_prompt
+  when: extras_only_list | length == 0
+
+- name: Déterminer la liste effective des outils à installer
+  ansible.builtin.set_fact:
+    effective_extras_raw: "{{ extras_only_list if extras_only_list | length > 0 else extras_prompt.user_input | default('') }}"
+
+- name: "Cas 'all' : sélectionner tous les outils optionnels"
+  ansible.builtin.set_fact:
+    effective_extras: "{{ optional_tools | map(attribute='name') | list }}"
+  when: effective_extras_raw | trim | lower == "all"
+
+- name: "Cas liste explicite : parser les noms séparés par des virgules"
+  ansible.builtin.set_fact:
+    effective_extras: "{{ effective_extras_raw.split(',') | map('trim') | reject('equalto', '') | list }}"
+  when: effective_extras_raw | trim | lower != "all"
+
+- name: Avertir si aucun outil sélectionné
+  ansible.builtin.debug:
+    msg: "Aucun outil sélectionné."
+  when: effective_extras | length == 0
+
+- name: Avertir sur les noms invalides
+  ansible.builtin.debug:
+    msg: "Outil inconnu : '{{ item }}' (options valides : {{ optional_tools | map(attribute='name') | join(', ') }})"
+  loop: "{{ effective_extras }}"
+  when: item not in (optional_tools | map(attribute='name') | list)
+
+- name: Installer chaque outil sélectionné et valide
+  ansible.builtin.include_tasks: optional_tool_install.yml
+  loop: "{{ effective_extras }}"
+  loop_control:
+    loop_var: tool_name
+  when: tool_name in (optional_tools | map(attribute='name') | list)

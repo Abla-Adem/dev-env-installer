@@ -1,0 +1,82 @@
+---
+# Équivalent de install_obsidian() dans bash/install.sh
+- name: Vérifier si Obsidian est déjà installé
+  ansible.builtin.command: which obsidian
+  register: obsidian_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Obsidian
+  when: obsidian_check.rc != 0
+  block:
+    - name: "macOS: Obsidian via Homebrew Cask"
+      community.general.homebrew_cask:
+        name: obsidian
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Linux: détecter snap/flatpak disponibles"
+      ansible.builtin.command: "which {{ item }}"
+      register: obsidian_pkg_managers
+      changed_when: false
+      failed_when: false
+      loop: [snap, flatpak]
+      when: ansible_facts['os_family'] != "Darwin"
+
+    - name: "Linux avec snap: installer Obsidian"
+      community.general.snap:
+        name: obsidian
+        classic: true
+      when:
+        - ansible_facts['os_family'] != "Darwin"
+        - obsidian_pkg_managers.results[0].rc == 0
+
+    - name: "Linux avec flatpak (pas de snap): installer Obsidian"
+      community.general.flatpak:
+        name: md.obsidian.Obsidian
+        remote: flathub
+        state: present
+      when:
+        - ansible_facts['os_family'] != "Darwin"
+        - obsidian_pkg_managers.results[0].rc != 0
+        - obsidian_pkg_managers.results[1].rc == 0
+
+    - name: "Linux sans snap/flatpak: récupérer la dernière release GitHub"
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest
+        return_content: true
+      register: obsidian_release
+      when:
+        - ansible_facts['os_family'] != "Darwin"
+        - obsidian_pkg_managers.results[0].rc != 0
+        - obsidian_pkg_managers.results[1].rc != 0
+
+    - name: "Debian/Ubuntu sans snap/flatpak: télécharger et installer le .deb"
+      when:
+        - ansible_facts['os_family'] == "Debian"
+        - obsidian_pkg_managers.results[0].rc != 0
+        - obsidian_pkg_managers.results[1].rc != 0
+      vars:
+        deb_asset: "{{ obsidian_release.json.assets | selectattr('name', 'search', 'amd64.*\\.deb$') | map(attribute='browser_download_url') | list | first }}"
+      ansible.builtin.apt:
+        deb: "{{ deb_asset }}"
+
+    - name: "Fedora/RHEL sans flatpak: télécharger et installer le .rpm"
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - obsidian_pkg_managers.results[1].rc != 0
+      vars:
+        rpm_asset: "{{ obsidian_release.json.assets | selectattr('name', 'search', '\\.rpm$') | map(attribute='browser_download_url') | list | first }}"
+      ansible.builtin.dnf:
+        name: "{{ rpm_asset }}"
+        state: present
+        disable_gpg_check: true
+
+    - name: "Arch sans flatpak: avertissement AUR"
+      ansible.builtin.debug:
+        msg: "Installe flatpak ou un helper AUR (yay/paru) pour Obsidian — non géré automatiquement par ce playbook."
+      when:
+        - ansible_facts['os_family'] == "Archlinux"
+        - obsidian_pkg_managers.results[1].rc != 0

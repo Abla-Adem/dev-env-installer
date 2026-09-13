@@ -1,0 +1,37 @@
+---
+# Équivalent de install_aws_sdk() dans bash/install.sh (boto3)
+- ansible.builtin.include_tasks: ensure_pip3.yml
+
+- name: Vérifier si boto3 est déjà importable
+  ansible.builtin.command: python3 -c "import boto3"
+  register: boto3_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer boto3 (pip --user)
+  ansible.builtin.pip:
+    name: boto3
+    extra_args: --user
+  become: false
+  register: boto3_install
+  failed_when: false
+  when: boto3_check.rc != 0
+
+- name: "Réessayer avec --break-system-packages (PEP 668 / Debian-Ubuntu récents)"
+  ansible.builtin.pip:
+    name: boto3
+    extra_args: --user --break-system-packages
+  become: false
+  when:
+    - boto3_check.rc != 0
+    - boto3_install is failed
+    - "'externally-managed-environment' in (boto3_install.msg | default('') ~ (boto3_install.stderr | default('')))"
+
+- name: Échouer si l'échec initial n'était pas lié à PEP 668
+  ansible.builtin.fail:
+    msg: "{{ boto3_install.msg }}"
+  when:
+    - boto3_check.rc != 0
+    - boto3_install is failed
+    - "'externally-managed-environment' not in (boto3_install.msg | default('') ~ (boto3_install.stderr | default('')))"

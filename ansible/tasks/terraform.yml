@@ -1,0 +1,81 @@
+---
+# Équivalent de install_terraform() dans bash/install.sh
+- name: Vérifier si Terraform est déjà installé
+  ansible.builtin.command: which terraform
+  register: terraform_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Terraform
+  when: terraform_check.rc != 0
+  block:
+    - name: "macOS: tap + install HashiCorp"
+      become: false
+      block:
+        - community.general.homebrew_tap:
+            name: hashicorp/tap
+        - community.general.homebrew:
+            name: hashicorp/tap/terraform
+            state: present
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Debian/Ubuntu: dépôt officiel HashiCorp"
+      when: ansible_facts['os_family'] == "Debian"
+      block:
+        - name: Créer /etc/apt/keyrings
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+        - name: Télécharger et dearmorer la clé GPG HashiCorp
+          ansible.builtin.shell: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor > /etc/apt/keyrings/hashicorp.gpg
+          args:
+            creates: /etc/apt/keyrings/hashicorp.gpg
+        - name: Ajouter le dépôt HashiCorp
+          ansible.builtin.apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com {{ ansible_facts['distribution_release'] }} main"
+            filename: hashicorp
+            state: present
+        - name: Installer terraform
+          ansible.builtin.apt:
+            name: terraform
+            state: present
+            update_cache: true
+
+    - name: "Fedora/RHEL: dépôt officiel HashiCorp"
+      when: ansible_facts['os_family'] == "RedHat"
+      block:
+        - ansible.builtin.dnf:
+            name: dnf-plugins-core
+            state: present
+        - ansible.builtin.command: dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
+          args:
+            creates: /etc/yum.repos.d/hashicorp.repo
+        - ansible.builtin.dnf:
+            name: terraform
+            state: present
+
+    - name: "Arch: paquet pacman"
+      ansible.builtin.pacman:
+        name: terraform
+        state: present
+      when: ansible_facts['os_family'] == "Archlinux"
+      register: terraform_pacman
+      failed_when: false
+
+    - name: "Arch: fallback binaire officiel si pacman échoue"
+      when:
+        - ansible_facts['os_family'] == "Archlinux"
+        - terraform_pacman is failed or terraform_pacman.rc | default(0) != 0
+      block:
+        - ansible.builtin.uri:
+            url: https://api.github.com/repos/hashicorp/terraform/releases/latest
+            return_content: true
+          register: terraform_release
+        - ansible.builtin.set_fact:
+            terraform_version: "{{ terraform_release.json.tag_name | regex_replace('^v', '') }}"
+        - ansible.builtin.unarchive:
+            src: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
+            dest: /usr/local/bin
+            remote_src: true

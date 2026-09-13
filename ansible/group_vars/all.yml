@@ -1,0 +1,44 @@
+---
+# Équivalents des variables de configuration en tête de bash/install.sh
+ssh_key_type: ed25519
+ssh_key_comment: "ablaadem3@gmail.com"
+ssh_key_path: "{{ ansible_env.HOME }}/.ssh/id_{{ ssh_key_type }}"
+
+repo_url: "git@github.com:Abla-Adem/sync-personal-doc.git"
+vault_path: "{{ ansible_env.HOME }}/Documents/{{ repo_url | basename | regex_replace('\\.git$', '') }}"
+
+git_user_name: "Abla-Adem"
+git_user_email: "{{ ssh_key_comment }}"
+
+# Équivalents des flags --ssh-only / --vault-only / --cloud-only / --extras-only
+# / --no-vault / --no-cloud / --with-extras du script bash. Se passent avec -e.
+ssh_only: false
+vault_only: false
+cloud_only: false
+extras_only: false
+no_vault: false
+no_cloud: false
+with_extras: false
+extras_only_list: ""   # ex: "yq,gh" — si vide et extras_only=true, prompt interactif
+
+# Calculés dans playbook.yml (pre_tasks), équivalents de SKIP_INSTALL/SKIP_SSH/
+# SKIP_CLOUD/SKIP_VAULT dans le script bash. Ne pas définir directement.
+skip_install: false
+skip_ssh: false
+skip_cloud: false
+skip_vault: false
+
+# Équivalent de OPTIONAL_TOOLS dans le script bash.
+optional_tools:
+  - name: yq
+    desc: "Équivalent de jq mais pour YAML — pratique avec Helm/Kubernetes/CI."
+  - name: k9s
+    desc: "Interface terminal (TUI) pour naviguer et débugger un cluster Kubernetes."
+  - name: kubectx
+    desc: "Bascule rapide entre contextes et namespaces Kubernetes (inclut kubens)."
+  - name: gh
+    desc: "CLI officiel GitHub : créer des repos/PR, gérer les issues, etc."
+  - name: direnv
+    desc: "Charge automatiquement des variables d'environnement par dossier."
+  - name: shellcheck
+    desc: "Linter pour scripts bash/shell."

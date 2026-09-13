@@ -1,0 +1,75 @@
+---
+# Équivalent de install_vscode() dans bash/install.sh
+- name: Vérifier si VS Code est déjà installé
+  ansible.builtin.command: which code
+  register: vscode_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer VS Code
+  when: vscode_check.rc != 0
+  block:
+    - name: "macOS: VS Code via Homebrew Cask"
+      community.general.homebrew_cask:
+        name: visual-studio-code
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Debian/Ubuntu: dépôt officiel Microsoft"
+      when: ansible_facts['os_family'] == "Debian"
+      block:
+        - name: Créer /etc/apt/keyrings
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+        - name: Télécharger et dearmorer la clé GPG Microsoft
+          ansible.builtin.shell: curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/keyrings/packages.microsoft.gpg
+          args:
+            creates: /etc/apt/keyrings/packages.microsoft.gpg
+        - name: Ajouter le dépôt VS Code
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main"
+            filename: vscode
+            state: present
+        - name: Installer le paquet code
+          ansible.builtin.apt:
+            name: code
+            state: present
+            update_cache: true
+
+    - name: "Fedora/RHEL: dépôt officiel Microsoft"
+      when: ansible_facts['os_family'] == "RedHat"
+      block:
+        - name: Importer la clé RPM Microsoft
+          ansible.builtin.rpm_key:
+            key: https://packages.microsoft.com/keys/microsoft.asc
+            state: present
+        - name: Ajouter le dépôt .repo VS Code
+          ansible.builtin.yum_repository:
+            name: code
+            description: Visual Studio Code
+            baseurl: https://packages.microsoft.com/yumrepos/vscode
+            gpgcheck: true
+            gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+        - name: Installer le paquet code
+          ansible.builtin.dnf:
+            name: code
+            state: present
+
+    - name: "Arch: build OSS via pacman (pas le binaire Microsoft)"
+      ansible.builtin.pacman:
+        name: code
+        state: present
+      when: ansible_facts['os_family'] == "Archlinux"
+      register: vscode_pacman
+      failed_when: false
+
+    - name: "Arch: avertissement build OSS"
+      ansible.builtin.debug:
+        msg: >-
+          Le paquet pacman 'code' est un build OSS sans télémétrie/marque Microsoft.
+          Pour le vrai binaire, installe 'visual-studio-code-bin' depuis l'AUR (yay/paru) — non géré par ce playbook.
+      when: ansible_facts['os_family'] == "Archlinux"

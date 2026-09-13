@@ -1,0 +1,40 @@
+---
+# Équivalent de generate_ssh_key() dans bash/install.sh
+- name: Créer ~/.ssh si besoin
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.ssh"
+    state: directory
+    mode: "0700"
+  become: false
+
+- name: Générer la clé SSH si elle n'existe pas déjà (ne l'écrase jamais)
+  community.crypto.openssh_keypair:
+    path: "{{ ssh_key_path }}"
+    type: "{{ ssh_key_type }}"
+    comment: "{{ ssh_key_comment }}"
+  become: false
+
+- name: Lire la clé publique
+  ansible.builtin.slurp:
+    src: "{{ ssh_key_path }}.pub"
+  register: ssh_pub_key
+  become: false
+
+- name: Charger la clé dans ssh-agent (best-effort, comme eval ssh-agent + ssh-add en bash)
+  ansible.builtin.shell: |
+    eval "$(ssh-agent -s)" > /dev/null 2>&1
+    ssh-add "{{ ssh_key_path }}" > /dev/null 2>&1
+  become: false
+  changed_when: false
+  failed_when: false
+
+- name: Afficher la clé publique (à ajouter sur GitHub/GitLab/Bitbucket)
+  ansible.builtin.debug:
+    msg: |
+      ==================================================================
+       Clé publique SSH (à ajouter sur GitHub/GitLab/Bitbucket) :
+      ==================================================================
+      {{ ssh_pub_key.content | b64decode | trim }}
+      ==================================================================
+      GitHub  -> https://github.com/settings/ssh/new
+      GitLab  -> https://gitlab.com/-/profile/keys

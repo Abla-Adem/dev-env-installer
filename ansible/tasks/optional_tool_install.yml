@@ -1,0 +1,169 @@
+---
+# Équivalent de install_optional_tool() + install_yq/install_k9s/install_kubectx/
+# install_gh/install_direnv/install_shellcheck dans bash/install.sh.
+# Attend une variable "tool_name" (yq|k9s|kubectx|gh|direnv|shellcheck).
+
+- name: "Vérifier si {{ tool_name }} est déjà installé"
+  ansible.builtin.command: "which {{ tool_name }}"
+  register: optional_tool_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: "Installer {{ tool_name }}"
+  when: optional_tool_check.rc != 0
+  block:
+    # --- yq ---------------------------------------------------------
+    - name: "yq (macOS)"
+      community.general.homebrew:
+        name: yq
+        state: present
+      become: false
+      when: tool_name == "yq" and ansible_facts['os_family'] == "Darwin"
+
+    - name: "yq (Linux): récupérer la dernière version"
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/mikefarah/yq/releases/latest
+        return_content: true
+      register: yq_release
+      when: tool_name == "yq" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "yq (Linux): télécharger le binaire"
+      ansible.builtin.get_url:
+        url: "https://github.com/mikefarah/yq/releases/download/{{ yq_release.json.tag_name }}/yq_linux_{{ arch_amd64_style }}"
+        dest: /usr/local/bin/yq
+        mode: "0755"
+      when: tool_name == "yq" and ansible_facts['os_family'] != "Darwin"
+
+    # --- k9s ----------------------------------------------------------
+    - name: "k9s (macOS)"
+      community.general.homebrew:
+        name: k9s
+        state: present
+      become: false
+      when: tool_name == "k9s" and ansible_facts['os_family'] == "Darwin"
+
+    - name: "k9s (Linux): récupérer la dernière version"
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/derailed/k9s/releases/latest
+        return_content: true
+      register: k9s_release
+      when: tool_name == "k9s" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "k9s (Linux): télécharger et extraire l'archive dans un dossier temporaire"
+      ansible.builtin.unarchive:
+        src: "https://github.com/derailed/k9s/releases/download/{{ k9s_release.json.tag_name }}/k9s_Linux_{{ arch_amd64_style }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+      when: tool_name == "k9s" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "k9s (Linux): installer le binaire dans /usr/local/bin"
+      ansible.builtin.copy:
+        src: /tmp/k9s
+        dest: /usr/local/bin/k9s
+        mode: "0755"
+        owner: root
+        group: root
+        remote_src: true
+      when: tool_name == "k9s" and ansible_facts['os_family'] != "Darwin"
+
+    # --- kubectx / kubens ----------------------------------------------
+    - name: "kubectx (macOS)"
+      community.general.homebrew:
+        name: kubectx
+        state: present
+      become: false
+      when: tool_name == "kubectx" and ansible_facts['os_family'] == "Darwin"
+
+    - name: "kubectx (Linux): récupérer la dernière version"
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
+        return_content: true
+      register: kubectx_release
+      when: tool_name == "kubectx" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "kubectx (Linux): télécharger et extraire kubectx + kubens dans un dossier temporaire"
+      ansible.builtin.unarchive:
+        src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/{{ item }}_{{ kubectx_release.json.tag_name }}_linux_{{ arch_x86_64_style }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+      loop: [kubectx, kubens]
+      when: tool_name == "kubectx" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "kubectx (Linux): installer les binaires dans /usr/local/bin"
+      ansible.builtin.copy:
+        src: "/tmp/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: "0755"
+        owner: root
+        group: root
+        remote_src: true
+      loop: [kubectx, kubens]
+      when: tool_name == "kubectx" and ansible_facts['os_family'] != "Darwin"
+
+    # --- gh (GitHub CLI) -------------------------------------------------
+    - name: "gh (macOS)"
+      community.general.homebrew:
+        name: gh
+        state: present
+      become: false
+      when: tool_name == "gh" and ansible_facts['os_family'] == "Darwin"
+
+    - name: "gh (Debian/Ubuntu): dépôt officiel"
+      when: tool_name == "gh" and ansible_facts['os_family'] == "Debian"
+      block:
+        - ansible.builtin.get_url:
+            url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+            dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        - ansible.builtin.apt_repository:
+            repo: "deb [arch={{ ansible_facts['architecture'] }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+            filename: github-cli
+        - ansible.builtin.apt:
+            name: gh
+            state: present
+            update_cache: true
+
+    - name: "gh (Fedora/RHEL): dépôt officiel"
+      when: tool_name == "gh" and ansible_facts['os_family'] == "RedHat"
+      block:
+        - ansible.builtin.dnf:
+            name: "dnf-command(config-manager)"
+            state: present
+        - ansible.builtin.command: dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          args:
+            creates: /etc/yum.repos.d/gh-cli.repo
+        - ansible.builtin.dnf:
+            name: gh
+            state: present
+
+    - name: "gh (Arch)"
+      ansible.builtin.pacman:
+        name: github-cli
+        state: present
+      when: tool_name == "gh" and ansible_facts['os_family'] == "Archlinux"
+
+    # --- direnv / shellcheck : paquets natifs partout ---------------------
+    - name: "direnv/shellcheck (macOS)"
+      community.general.homebrew:
+        name: "{{ tool_name }}"
+        state: present
+      become: false
+      when: tool_name in ["direnv", "shellcheck"] and ansible_facts['os_family'] == "Darwin"
+
+    - name: "direnv (Linux)"
+      ansible.builtin.package:
+        name: direnv
+        state: present
+      when: tool_name == "direnv" and ansible_facts['os_family'] != "Darwin"
+
+    - name: "shellcheck (Debian/Arch)"
+      ansible.builtin.package:
+        name: shellcheck
+        state: present
+      when: tool_name == "shellcheck" and ansible_facts['os_family'] in ["Debian", "Archlinux"]
+
+    - name: "shellcheck (Fedora/RHEL — nom de paquet différent)"
+      ansible.builtin.dnf:
+        name: ShellCheck
+        state: present
+      when: tool_name == "shellcheck" and ansible_facts['os_family'] == "RedHat"

@@ -1,0 +1,34 @@
+---
+# Équivalent de install_kubectl() dans bash/install.sh
+- name: Vérifier si kubectl est déjà installé
+  ansible.builtin.command: which kubectl
+  register: kubectl_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer kubectl
+  when: kubectl_check.rc != 0
+  block:
+    - name: "macOS: via Homebrew"
+      community.general.homebrew:
+        name: kubectl
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Linux: récupérer la version stable"
+      ansible.builtin.uri:
+        url: https://dl.k8s.io/release/stable.txt
+        return_content: true
+      register: kubectl_version
+      when: ansible_facts['os_family'] != "Darwin"
+
+    - name: "Linux: télécharger et installer le binaire officiel"
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version.content | trim }}/bin/linux/{{ arch_amd64_style }}/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+        owner: root
+        group: root
+      when: ansible_facts['os_family'] != "Darwin"

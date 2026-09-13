@@ -1,0 +1,54 @@
+---
+# Équivalent de install_gcloud() dans bash/install.sh
+- name: Vérifier si gcloud est déjà installé
+  ansible.builtin.command: which gcloud
+  register: gcloud_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Google Cloud SDK
+  when: gcloud_check.rc != 0
+  block:
+    - name: "macOS: via Homebrew Cask"
+      community.general.homebrew_cask:
+        name: google-cloud-sdk
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Debian/Ubuntu: dépôt officiel Google"
+      when: ansible_facts['os_family'] == "Debian"
+      block:
+        - name: Télécharger et dearmorer la clé GPG Google Cloud
+          ansible.builtin.shell: curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor > /usr/share/keyrings/cloud.google.gpg
+          args:
+            creates: /usr/share/keyrings/cloud.google.gpg
+        - name: Ajouter le dépôt Google Cloud SDK
+          ansible.builtin.apt_repository:
+            repo: "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main"
+            filename: google-cloud-sdk
+            state: present
+        - name: Installer google-cloud-cli
+          ansible.builtin.apt:
+            name: google-cloud-cli
+            state: present
+            update_cache: true
+
+    - name: "Fedora/RHEL: dépôt officiel Google"
+      when: ansible_facts['os_family'] == "RedHat"
+      block:
+        - ansible.builtin.yum_repository:
+            name: google-cloud-cli
+            description: Google Cloud CLI
+            baseurl: https://packages.cloud.google.com/yum/repos/cloud-sdk-el8-x86_64
+            gpgcheck: true
+            gpgkey: https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+        - ansible.builtin.dnf:
+            name: google-cloud-cli
+            state: present
+
+    - name: "Arch/autre: script d'installation officiel Google"
+      ansible.builtin.shell: curl -fsSL https://sdk.cloud.google.com | bash -s -- --disable-prompts
+      become: false
+      when: ansible_facts['os_family'] in ["Archlinux"]

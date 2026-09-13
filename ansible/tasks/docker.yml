@@ -1,0 +1,58 @@
+---
+# Équivalent de install_docker() dans bash/install.sh
+- name: Vérifier si Docker est déjà installé
+  ansible.builtin.command: which docker
+  register: docker_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer Docker
+  when: docker_check.rc != 0
+  block:
+    - name: "macOS: Docker Desktop via Homebrew Cask"
+      community.general.homebrew_cask:
+        name: docker
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "macOS: rappel pour terminer l'installation"
+      ansible.builtin.debug:
+        msg: "Lance l'application Docker.app au moins une fois pour terminer l'installation du moteur."
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Debian/Fedora: script officiel get.docker.com"
+      ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+      when: ansible_facts['os_family'] in ["Debian", "RedHat"]
+
+    - name: "Arch: paquets pacman"
+      ansible.builtin.pacman:
+        name:
+          - docker
+          - docker-compose
+        state: present
+      when: ansible_facts['os_family'] == "Archlinux"
+
+- name: Activer et démarrer le service Docker (Linux)
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  when: ansible_facts['os_family'] != "Darwin"
+  failed_when: false
+
+- name: Ajouter l'utilisateur au groupe docker (Linux)
+  ansible.builtin.user:
+    name: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
+    groups: docker
+    append: true
+  when: ansible_facts['os_family'] != "Darwin"
+  register: docker_group
+
+- name: Avertir qu'une reconnexion est nécessaire
+  ansible.builtin.debug:
+    msg: "Utilisateur ajouté au groupe 'docker'. Déconnexion/reconnexion (ou reboot) nécessaire pour utiliser docker sans sudo."
+  when:
+    - ansible_facts['os_family'] != "Darwin"
+    - docker_group is changed

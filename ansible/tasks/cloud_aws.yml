@@ -1,0 +1,102 @@
+---
+# Équivalent de configure_aws() dans bash/install.sh.
+# Différence importante : `aws configure` est un assistant interactif qui lit
+# stdin — Ansible NE PEUT PAS lui transmettre de saisie clavier via le module
+# command/shell (stdin y est toujours fermé, même en connexion locale). On
+# écrit donc directement ~/.aws/credentials et ~/.aws/config, ce qui est de
+# toute façon l'approche Ansible idiomatique (déclarative plutôt que piloter
+# un assistant CLI).
+
+- name: Vérifier si AWS CLI est installé
+  ansible.builtin.command: which aws
+  register: aws_bin_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Configuration AWS
+  when: aws_bin_check.rc == 0
+  become: false
+  block:
+    - name: Vérifier si des identifiants AWS valides existent déjà
+      ansible.builtin.command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+      failed_when: false
+
+    - name: Demander confirmation pour configurer AWS maintenant
+      ansible.builtin.pause:
+        prompt: "Configurer AWS CLI maintenant (Access Key ID / Secret Access Key requis) ? [o/N]"
+      register: aws_confirm
+      when: aws_identity.rc != 0
+
+    - name: Saisir et écrire les identifiants AWS
+      when:
+        - aws_identity.rc != 0
+        - aws_confirm.user_input is defined
+        - aws_confirm.user_input | lower is match("^[oy]")
+      block:
+        - ansible.builtin.pause:
+            prompt: "AWS Access Key ID"
+          register: aws_access_key_id_prompt
+
+        - ansible.builtin.pause:
+            prompt: "AWS Secret Access Key"
+            echo: false
+          register: aws_secret_key_prompt
+          no_log: true
+
+        - ansible.builtin.pause:
+            prompt: "Région par défaut (ex: eu-west-3)"
+          register: aws_region_prompt
+
+        - name: Créer ~/.aws
+          ansible.builtin.file:
+            path: "{{ ansible_env.HOME }}/.aws"
+            state: directory
+            mode: "0700"
+
+        - name: Écrire ~/.aws/credentials
+          ansible.builtin.copy:
+            dest: "{{ ansible_env.HOME }}/.aws/credentials"
+            mode: "0600"
+            content: |
+              [default]
+              aws_access_key_id = {{ aws_access_key_id_prompt.user_input }}
+              aws_secret_access_key = {{ aws_secret_key_prompt.user_input }}
+          no_log: true
+
+        - name: Écrire ~/.aws/config
+          ansible.builtin.copy:
+            dest: "{{ ansible_env.HOME }}/.aws/config"
+            mode: "0600"
+            content: |
+              [default]
+              region = {{ aws_region_prompt.user_input }}
+              output = json
+
+        - name: Revérifier l'identité AWS
+          ansible.builtin.command: aws sts get-caller-identity
+          register: aws_identity_recheck
+          changed_when: false
+          failed_when: false
+
+        - name: Confirmer le succès
+          ansible.builtin.debug:
+            msg: "AWS configuré avec succès."
+          when: aws_identity_recheck.rc == 0
+
+        - name: Avertir en cas d'échec
+          ansible.builtin.debug:
+            msg: "La vérification AWS a échoué, vérifie les identifiants saisis."
+          when: aws_identity_recheck.rc != 0
+
+    - name: AWS déjà configuré
+      ansible.builtin.debug:
+        msg: "AWS CLI déjà configuré et fonctionnel (identité vérifiée), skip."
+      when: aws_identity.rc == 0
+
+- name: AWS CLI non installé
+  ansible.builtin.debug:
+    msg: "AWS CLI non installé, configuration AWS ignorée."
+  when: aws_bin_check.rc != 0

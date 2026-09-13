@@ -1,0 +1,31 @@
+---
+# Équivalent de install_awscli() dans bash/install.sh
+- name: Vérifier si AWS CLI est déjà installé
+  ansible.builtin.command: which aws
+  register: awscli_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer AWS CLI v2
+  when: awscli_check.rc != 0
+  block:
+    - name: "macOS: via Homebrew"
+      community.general.homebrew:
+        name: awscli
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - name: "Linux: installeur officiel AWS (zip)"
+      when: ansible_facts['os_family'] != "Darwin"
+      vars:
+        aws_arch: "{{ 'aarch64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'x86_64' }}"
+      block:
+        - ansible.builtin.unarchive:
+            src: "https://awscli.amazonaws.com/awscli-exe-linux-{{ aws_arch }}.zip"
+            dest: /tmp
+            remote_src: true
+        - ansible.builtin.command: /tmp/aws/install
+          args:
+            creates: /usr/local/bin/aws

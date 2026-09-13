@@ -1,0 +1,33 @@
+---
+# Équivalent de ensure_pip3() dans bash/install.sh — inclus par aws_sdk.yml et gcp_sdk.yml
+- name: Vérifier si pip3 est installé
+  ansible.builtin.command: which pip3
+  register: pip3_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer pip3
+  when: pip3_check.rc != 0
+  block:
+    - community.general.homebrew:
+        name: python
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    - ansible.builtin.apt:
+        name: python3-pip
+        state: present
+        update_cache: true
+      when: ansible_facts['os_family'] == "Debian"
+
+    - ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - ansible.builtin.pacman:
+        name: python-pip
+        state: present
+      when: ansible_facts['os_family'] == "Archlinux"
