@@ -1,0 +1,126 @@
+---
+# Démo Ansible équivalente à une PARTIE de install.sh — pas une réécriture
+# complète (Obsidian, gcloud, kubectl, Helm, boto3, etc. suivraient le même
+# principe mais alourdiraient cette démo). But : montrer la différence de
+# forme avec le script bash.
+#
+# Lancer avec :
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
+
+- name: Provisionner un poste de dev
+  hosts: local
+  become: true
+
+  vars:
+    git_user_name: "Abla-Adem"
+    git_user_email: "ablaadem3@gmail.com"
+    ssh_key_path: "{{ ansible_env.HOME }}/.ssh/id_ed25519"
+
+  tasks:
+    # -------------------------------------------------------------------
+    # 1. Paquets simples, disponibles nativement sur toutes les distros
+    #    Linux (apt/dnf/pacman) — un seul module au lieu d'un `case` par OS.
+    # -------------------------------------------------------------------
+    - name: Installer jq, direnv, shellcheck (Linux)
+      ansible.builtin.package:
+        name:
+          - jq
+          - direnv
+          - shellcheck
+        state: present
+      when: ansible_facts['os_family'] != "Darwin"
+
+    - name: Installer jq, direnv, shellcheck (macOS)
+      community.general.homebrew:
+        name:
+          - jq
+          - direnv
+          - shellcheck
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    # -------------------------------------------------------------------
+    # 2. Outil nécessitant un dépôt tiers (équivalent du bloc apt/dnf de
+    #    install_vscode() dans le script bash) — ici juste pour Debian/Ubuntu.
+    # -------------------------------------------------------------------
+    - name: VS Code — ajouter le dépôt et installer (Debian/Ubuntu)
+      when: ansible_facts['os_family'] == "Debian"
+      block:
+        - name: Ajouter la clé GPG Microsoft
+          ansible.builtin.apt_key:
+            url: https://packages.microsoft.com/keys/microsoft.asc
+            state: present
+
+        - name: Ajouter le dépôt VS Code
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64,arm64,armhf] https://packages.microsoft.com/repos/code stable main"
+            state: present
+            filename: vscode
+
+        - name: Installer VS Code
+          ansible.builtin.apt:
+            name: code
+            state: present
+            update_cache: true
+
+    - name: VS Code et Docker (macOS, via Homebrew Cask)
+      community.general.homebrew_cask:
+        name:
+          - visual-studio-code
+          - docker
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
+
+    # -------------------------------------------------------------------
+    # 3. Clé SSH — un seul module idempotent, pas de `if [[ -f ... ]]` manuel.
+    # -------------------------------------------------------------------
+    - name: Générer la clé SSH si elle n'existe pas déjà
+      community.crypto.openssh_keypair:
+        path: "{{ ssh_key_path }}"
+        type: ed25519
+        comment: "{{ git_user_email }}"
+      become: false
+      register: ssh_key
+
+    - name: Afficher la clé publique
+      ansible.builtin.debug:
+        msg: "{{ lookup('file', ssh_key_path + '.pub') }}"
+
+    # -------------------------------------------------------------------
+    # 4. Identité Git globale — module dédié plutôt que des `git config`
+    #    appelés à la main.
+    # -------------------------------------------------------------------
+    - name: Configurer git user.name
+      community.general.git_config:
+        name: user.name
+        scope: global
+        value: "{{ git_user_name }}"
+      become: false
+
+    - name: Configurer git user.email
+      community.general.git_config:
+        name: user.email
+        scope: global
+        value: "{{ git_user_email }}"
+      become: false
+
+    # -------------------------------------------------------------------
+    # 5. Clonage du vault Obsidian — équivalent de setup_obsidian_vault().
+    #    Ansible attend juste que le hôte SSH soit joignable ; il ne gère
+    #    pas l'attente interactive "ajoute ta clé sur GitHub" du script bash.
+    # -------------------------------------------------------------------
+    - name: Cloner le coffre-fort Obsidian
+      ansible.builtin.git:
+        repo: "git@github.com:Abla-Adem/sync-personal-doc.git"
+        dest: "{{ ansible_env.HOME }}/Documents/sync-personal-doc"
+        accept_hostkey: true
+      become: false
+
+    - name: Créer le dossier .obsidian (reconnu comme vault)
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/Documents/sync-personal-doc/.obsidian"
+        state: directory
+      become: false

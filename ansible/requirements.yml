@@ -1,0 +1,5 @@
+---
+# Collections nécessaires (ansible-galaxy collection install -r requirements.yml)
+collections:
+  - name: community.general   # homebrew_cask, git_config
+  - name: community.crypto    # openssh_keypair
