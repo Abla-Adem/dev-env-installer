@@ -13,6 +13,8 @@
 #   ./install.sh --cloud-only        # pas d'install/ssh/vault, juste configuration interactive AWS + GCP
 #   ./install.sh --no-cloud          # installe/clone tout mais saute la configuration AWS/GCP
 #   ./install.sh --with-extras       # installe en plus les outils optionnels (yq, k9s, kubectx, gh, direnv, shellcheck)
+#   ./install.sh --extras-only       # rien d'autre : choisis un/plusieurs outils optionnels via un menu interactif
+#   ./install.sh --extras-only=yq,gh # rien d'autre : installe directement les outils optionnels listés
 #   SSH_KEY_COMMENT="you@example.com" REPO_URL="git@github.com:user/repo.git" ./install.sh
 #   GIT_USER_NAME="Ton Nom" GIT_USER_EMAIL="you@example.com" ./install.sh   # évite les prompts interactifs
 #
@@ -43,6 +45,8 @@ SKIP_SSH=false
 SKIP_CLOUD=false
 SKIP_VAULT=false
 WITH_EXTRAS=false
+EXTRAS_ONLY=false
+EXTRAS_ONLY_LIST=""
 for arg in "$@"; do
   case "$arg" in
     --ssh-only)   SKIP_INSTALL=true; SKIP_CLOUD=true; SKIP_VAULT=true ;;
@@ -51,6 +55,13 @@ for arg in "$@"; do
     --cloud-only) SKIP_INSTALL=true; SKIP_SSH=true; SKIP_VAULT=true ;;
     --no-cloud)   SKIP_CLOUD=true ;;
     --with-extras) WITH_EXTRAS=true ;;
+    --extras-only)
+      EXTRAS_ONLY=true; SKIP_INSTALL=true; SKIP_SSH=true; SKIP_CLOUD=true; SKIP_VAULT=true
+      ;;
+    --extras-only=*)
+      EXTRAS_ONLY=true; SKIP_INSTALL=true; SKIP_SSH=true; SKIP_CLOUD=true; SKIP_VAULT=true
+      EXTRAS_ONLY_LIST="${arg#*=}"
+      ;;
   esac
 done
 
@@ -648,8 +659,79 @@ print_optional_tools_summary() {
   done
   echo
   echo "Pour tous les installer : ./install.sh --with-extras"
+  echo "Pour en choisir : ./install.sh --extras-only"
   echo "=================================================================="
   echo
+}
+
+# ---------------------------------------------------------------------------
+# Sélection interactive des outils optionnels (--extras-only)
+# ---------------------------------------------------------------------------
+select_extras_interactive() {
+  local entry name desc i=1
+  local names=()
+  {
+    echo "Outils optionnels disponibles :"
+    for entry in "${OPTIONAL_TOOLS[@]}"; do
+      name="${entry%%|*}"
+      desc="${entry#*|}"
+      printf "  %d) %-10s %s\n" "$i" "$name" "$desc"
+      names+=("$name")
+      i=$((i + 1))
+    done
+    printf "  a) Tous\n"
+  } >&2
+
+  local ans
+  printf "Ton choix (numéros séparés par espaces/virgules, ou 'a' pour tous) : " >&2
+  read -r ans
+
+  if [[ "$ans" == "a" || "$ans" == "A" ]]; then
+    printf '%s\n' "${names[@]}"
+    return
+  fi
+
+  ans="${ans//,/ }"
+  local idx
+  for idx in $ans; do
+    if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#names[@]} )); then
+      printf '%s\n' "${names[$((idx - 1))]}"
+    else
+      warn "Choix ignoré (invalide) : '$idx'"
+    fi
+  done
+}
+
+run_extras_only() {
+  local valid_names=() entry tool selection=() line
+
+  for entry in "${OPTIONAL_TOOLS[@]}"; do
+    valid_names+=("${entry%%|*}")
+  done
+
+  if [[ -n "$EXTRAS_ONLY_LIST" ]]; then
+    local IFS=','
+    read -ra selection <<< "$EXTRAS_ONLY_LIST"
+  else
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && selection+=("$line")
+    done < <(select_extras_interactive)
+  fi
+
+  if [[ ${#selection[@]} -eq 0 ]]; then
+    warn "Aucun outil sélectionné."
+    return
+  fi
+
+  for tool in "${selection[@]}"; do
+    tool="$(echo "$tool" | tr -d '[:space:]')"
+    [[ -z "$tool" ]] && continue
+    if printf '%s\n' "${valid_names[@]}" | grep -qx "$tool"; then
+      install_optional_tool "$tool" || warn "Échec de l'installation de '$tool', on continue avec les autres."
+    else
+      warn "Outil inconnu : '$tool' (options valides : ${valid_names[*]})"
+    fi
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -867,6 +949,15 @@ setup_obsidian_vault() {
 main() {
   detect_pkg_manager
 
+  if [[ "$EXTRAS_ONLY" == true ]]; then
+    if [[ "$PKG_MGR" == "brew" ]]; then
+      ensure_brew
+    fi
+    run_extras_only
+    log "Terminé."
+    return
+  fi
+
   if [[ "$SKIP_INSTALL" == false ]]; then
     if [[ "$PKG_MGR" == "brew" ]]; then
       ensure_brew
@@ -885,9 +976,10 @@ main() {
     install_claude_code
 
     if [[ "$WITH_EXTRAS" == true ]]; then
-      local entry
+      local entry tool_name
       for entry in "${OPTIONAL_TOOLS[@]}"; do
-        install_optional_tool "${entry%%|*}"
+        tool_name="${entry%%|*}"
+        install_optional_tool "$tool_name" || warn "Échec de l'installation de '$tool_name', on continue avec les autres."
       done
     fi
   fi

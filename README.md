@@ -19,7 +19,9 @@ Script bash unique (`install.sh`) qui installe un environnement de dev complet s
 ```
 main()
  ├─ detect_pkg_manager()        → détermine OS + gestionnaire de paquets
- ├─ (si installs pas sautés: SKIP_INSTALL)
+ ├─ (si --extras-only) ensure_brew() + run_extras_only() puis return anticipé
+ │                       → sélection interactive (menu numéroté) ou --extras-only=<liste>
+ ├─ (si installs pas sautés: SKIP_INSTALL, et pas en mode --extras-only)
  │   ├─ ensure_brew()           → macOS seulement
  │   ├─ install_vscode()
  │   ├─ install_obsidian()
@@ -63,6 +65,8 @@ Chaque fonction d'installation est **idempotente** : elle vérifie d'abord si l'
 | `--cloud-only` | Saute installations, ssh et vault : ne fait que la configuration interactive AWS + GCP |
 | `--no-cloud` | Fait tout le reste, mais saute la configuration AWS/GCP |
 | `--with-extras` | En plus d'un run normal, installe aussi tous les outils optionnels (`yq`, `k9s`, `kubectx`, `gh`, `direnv`, `shellcheck`) |
+| `--extras-only` | Rien d'autre : ouvre un menu interactif pour choisir un ou plusieurs outils optionnels à installer |
+| `--extras-only=<liste>` | Rien d'autre : installe directement les outils listés (séparés par des virgules), sans menu — ex: `--extras-only=yq,gh` |
 
 En interne, ces flags positionnent cinq booléens :
 
@@ -181,8 +185,16 @@ Six outils utiles mais non indispensables, **jamais installés par défaut** :
 | `direnv` | Variables d'environnement automatiques par dossier | Paquet natif (apt/dnf/pacman) / `brew install direnv` |
 | `shellcheck` | Linter bash/shell | Paquet natif (`ShellCheck` sur dnf) / `brew install shellcheck` |
 
-- Deux façons de les obtenir : `./install.sh --with-extras` (installe les six immédiatement) ou individuellement plus tard en appelant la fonction correspondante.
-- **`print_optional_tools_summary()`** tourne à la toute fin d'un run normal (pas en `--ssh-only`/`--vault-only`/`--cloud-only`) : elle boucle sur `OPTIONAL_TOOLS`, ne garde que ceux pour lesquels `have <commande>` échoue, et affiche leur nom + description + rappel de `--with-extras` — uniquement s'il en manque au moins un.
+Trois façons de les obtenir :
+1. `./install.sh --with-extras` : les installe tous les six, en plus d'un run normal complet.
+2. `./install.sh --extras-only` : **rien d'autre** ne s'exécute (installs, ssh, cloud, vault sont tous sautés), et un **menu interactif** s'affiche pour choisir un ou plusieurs outils.
+3. `./install.sh --extras-only=<liste>` : comme ci-dessus mais sans menu, en donnant directement les noms séparés par des virgules (ex: `--extras-only=yq,gh`).
+
+**`select_extras_interactive()`** : affiche le menu numéroté (1 à 6, plus `a` pour "tous") sur stderr — pour ne pas polluer la valeur retournée sur stdout, qui est capturée par `run_extras_only()` via `$(...)`. Accepte une saisie du type `2 4` ou `2,4`, ignore et avertit sur les entrées invalides.
+
+**`run_extras_only()`** : construit la liste des outils à installer (soit depuis `--extras-only=<liste>`, soit depuis le menu), vérifie chaque nom contre `OPTIONAL_TOOLS`, et appelle `install_optional_tool()` pour chacun. **L'échec d'un outil n'interrompt pas les autres** : chaque appel est protégé par `|| warn ...` (nécessaire à cause de `set -e` en tête de script, qui arrêterait sinon tout le script au premier échec — par exemple un binaire GitHub récupéré mais dont l'installation finale via `sudo install` échoue faute de mot de passe interactif).
+
+**`print_optional_tools_summary()`** tourne à la toute fin d'un run normal (pas en `--ssh-only`/`--vault-only`/`--cloud-only`/`--extras-only`) : elle boucle sur `OPTIONAL_TOOLS`, ne garde que ceux pour lesquels `have <commande>` échoue, et affiche leur nom + description + rappel de `--with-extras` et `--extras-only` — uniquement s'il en manque au moins un.
 
 ### 6. Génération de la clé SSH — `generate_ssh_key()` (install.sh:658-682)
 
@@ -293,6 +305,16 @@ REPO_URL="git@github.com:user/vault.git" ./install.sh --vault-only
 **Tout installer, y compris les outils optionnels :**
 ```bash
 ./install.sh --with-extras
+```
+
+**Choisir un ou plusieurs outils optionnels via un menu :**
+```bash
+./install.sh --extras-only
+```
+
+**Installer directement des outils optionnels précis, sans menu :**
+```bash
+./install.sh --extras-only=yq,gh
 ```
 
 ---
