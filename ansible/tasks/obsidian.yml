@@ -43,11 +43,15 @@
         - obsidian_pkg_managers.results[0].rc != 0
         - obsidian_pkg_managers.results[1].rc == 0
 
-    - name: "Linux sans snap/flatpak: récupérer la dernière release GitHub"
+    # /releases/latest peut pointer sur une release mobile-only (.apk seul,
+    # sans .deb/.rpm — vérifié en conditions réelles). On cherche donc dans
+    # les releases récentes (déjà triées du plus récent au plus ancien par
+    # l'API GitHub) plutôt que sur la seule "latest".
+    - name: "Linux sans snap/flatpak: récupérer les releases récentes GitHub"
       ansible.builtin.uri:
-        url: https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest
+        url: https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=10
         return_content: true
-      register: obsidian_release
+      register: obsidian_releases
       when:
         - ansible_facts['os_family'] != "Darwin"
         - obsidian_pkg_managers.results[0].rc != 0
@@ -59,7 +63,7 @@
         - obsidian_pkg_managers.results[0].rc != 0
         - obsidian_pkg_managers.results[1].rc != 0
       vars:
-        deb_asset: "{{ obsidian_release.json.assets | selectattr('name', 'search', 'amd64.*\\.deb$') | map(attribute='browser_download_url') | list | first }}"
+        deb_asset: "{{ (obsidian_releases.json | map(attribute='assets') | flatten | selectattr('name', 'search', '\\.deb$') | map(attribute='browser_download_url') | list)[0] }}"
       ansible.builtin.apt:
         deb: "{{ deb_asset }}"
 
@@ -68,7 +72,7 @@
         - ansible_facts['os_family'] == "RedHat"
         - obsidian_pkg_managers.results[1].rc != 0
       vars:
-        rpm_asset: "{{ obsidian_release.json.assets | selectattr('name', 'search', '\\.rpm$') | map(attribute='browser_download_url') | list | first }}"
+        rpm_asset: "{{ (obsidian_releases.json | map(attribute='assets') | flatten | selectattr('name', 'search', '\\.rpm$') | map(attribute='browser_download_url') | list)[0] }}"
       ansible.builtin.dnf:
         name: "{{ rpm_asset }}"
         state: present

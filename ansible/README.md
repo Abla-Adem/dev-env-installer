@@ -106,6 +106,9 @@ Aucun n'était visible à la simple lecture — la valeur d'un test réel par ra
 2. **`ansible.builtin.apt_key` est déprécié** (trouvé en relisant) — remplacé par le téléchargement + `gpg --dearmor` vers un keyring, avec `signed-by=` dans la ligne `deb`, comme le fait déjà le script bash.
 3. **Le `Gathering Facts` implicite héritait de `become: true`** (trouvé en exécutant `-e ssh_only=true` : `sudo: a password is required` dès la première tâche, alors que ce mode ne devrait avoir besoin d'aucun privilège). Corrigé avec `gather_facts: false` + une tâche `ansible.builtin.setup` explicite en `become: false`.
 4. **`ssh -T ... | grep -q` échoue à tort** (trouvé en exécutant `-e vault_only=true` : la boucle d'attente SSH bouclait indéfiniment alors que l'authentification GitHub fonctionne bel et bien sur cette machine). `grep -q` sort dès son premier match, le `SIGPIPE` envoyé à `ssh` remonte comme un échec via `pipefail`. Corrigé en capturant la sortie dans une variable avant de la grepper — exactement ce que fait déjà `test_ssh_auth()` en bash, qui n'a jamais eu ce problème.
+5. **`obsidian.yml` cherchait un `.deb`/`.rpm` dans `/releases/latest`**, qui peut pointer sur une release mobile-only sans installeur desktop (vérifié en conditions réelles côté script bash : c'était le cas au moment du test — même bug, même cause, deux implémentations). Corrigé pour chercher dans les releases récentes (`/releases?per_page=10`) via `map(attribute='assets') | flatten | selectattr(...)`, validé avec un test Ansible isolé qui retourne bien la bonne URL.
+
+*(`awscli.yml`/`terraform.yml` utilisent `ansible.builtin.unarchive`, qui extrait en Python sans dépendre du binaire système `unzip` — contrairement à `bash/install.sh`, qui a dû recevoir un `ensure_unzip()` après que ce manque a été découvert en testant le téléchargement AWS CLI.)*
 
 ## Ce qui est réellement plus simple qu'en bash
 

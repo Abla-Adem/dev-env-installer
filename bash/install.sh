@@ -173,11 +173,16 @@ install_obsidian() {
       elif have flatpak; then
         $SUDO flatpak install -y flathub md.obsidian.Obsidian
       else
+        # /releases/latest peut pointer sur une release mobile-only (.apk
+        # seul, sans .deb) : on cherche plutôt dans les releases récentes,
+        # déjà triées du plus récent au plus ancien par l'API GitHub.
         local url
-        url=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
-              | grep -oP '"browser_download_url":\s*"\K[^"]*\.deb(?=")' | grep amd64 | head -n1)
-        [[ -z "$url" ]] && url=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
+        url=$(curl -fsSL "https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=10" \
               | grep -oP '"browser_download_url":\s*"\K[^"]*\.deb(?=")' | head -n1)
+        if [[ -z "$url" ]]; then
+          err "Impossible de trouver un .deb Obsidian dans les releases récentes."
+          return
+        fi
         curl -fL "$url" -o /tmp/obsidian.deb
         $SUDO apt-get install -y /tmp/obsidian.deb
         rm -f /tmp/obsidian.deb
@@ -188,8 +193,12 @@ install_obsidian() {
         $SUDO flatpak install -y flathub md.obsidian.Obsidian
       else
         local url
-        url=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
+        url=$(curl -fsSL "https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=10" \
               | grep -oP '"browser_download_url":\s*"\K[^"]*\.rpm(?=")' | head -n1)
+        if [[ -z "$url" ]]; then
+          err "Impossible de trouver un .rpm Obsidian dans les releases récentes."
+          return
+        fi
         curl -fL "$url" -o /tmp/obsidian.rpm
         $SUDO dnf install -y /tmp/obsidian.rpm
         rm -f /tmp/obsidian.rpm
@@ -243,6 +252,7 @@ install_terraform() {
         local ver
         ver=$(curl -fsSL https://api.github.com/repos/hashicorp/terraform/releases/latest | grep -oP '"tag_name":\s*"v\K[0-9.]+')
         curl -fL "https://releases.hashicorp.com/terraform/${ver}/terraform_${ver}_linux_amd64.zip" -o /tmp/terraform.zip
+        ensure_unzip
         $SUDO unzip -o /tmp/terraform.zip -d /usr/local/bin
         rm -f /tmp/terraform.zip
       fi
@@ -284,6 +294,20 @@ pip_install() {
 }
 
 # ---------------------------------------------------------------------------
+# unzip (nécessaire pour AWS CLI et le fallback Terraform sur Arch)
+# ---------------------------------------------------------------------------
+ensure_unzip() {
+  if have unzip; then return; fi
+  log "unzip non trouvé, installation..."
+  case "$PKG_MGR" in
+    apt)    $SUDO apt-get update -y && $SUDO apt-get install -y unzip ;;
+    dnf)    $SUDO dnf install -y unzip ;;
+    pacman) $SUDO pacman -S --noconfirm --needed unzip ;;
+    *)      err "Impossible d'installer unzip automatiquement sur ce système." ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # AWS CLI
 # ---------------------------------------------------------------------------
 install_awscli() {
@@ -295,6 +319,7 @@ install_awscli() {
       ;;
     apt|dnf|pacman)
       local aws_arch pkg_url
+      ensure_unzip
       case "$ARCH" in
         x86_64) aws_arch="x86_64" ;;
         aarch64|arm64) aws_arch="aarch64" ;;

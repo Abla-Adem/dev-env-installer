@@ -147,7 +147,7 @@ Méthode utilisée par outil et par OS :
 | **VS Code** | `brew install --cask visual-studio-code` | Dépôt officiel Microsoft (clé GPG + `apt` repo) | Dépôt `.repo` Microsoft | `pacman -S code` (build OSS) ou AUR `visual-studio-code-bin` via `yay` |
 | **Obsidian** | `brew install --cask obsidian` | `snap`, sinon `flatpak`, sinon `.deb` téléchargé depuis la dernière release GitHub | `flatpak`, sinon `.rpm` GitHub | `flatpak`, sinon AUR via `yay` |
 | **Terraform** | `brew install hashicorp/tap/terraform` | Dépôt officiel HashiCorp | Dépôt officiel HashiCorp | `pacman -S terraform`, fallback binaire zip officiel |
-| **AWS CLI v2** | `brew install awscli` | Installeur officiel AWS (`awscliv2.zip`) | idem | idem |
+| **AWS CLI v2** | `brew install awscli` | Installeur officiel AWS (`awscliv2.zip`, nécessite `unzip` — installé automatiquement via `ensure_unzip()` si absent) | idem | idem |
 | **gcloud (GCP)** | `brew install --cask google-cloud-sdk` | Dépôt officiel `packages.cloud.google.com` | Dépôt `.repo` Google | Script officiel `sdk.cloud.google.com` (pas de paquet natif fiable) |
 | **Docker** | `brew install --cask docker` | Script officiel `get.docker.com` | Script officiel `get.docker.com` | `pacman -S docker docker-compose` |
 | **kubectl** | `brew install kubectl` | Binaire officiel `dl.k8s.io` (version stable, arch détectée) | idem | idem |
@@ -157,7 +157,7 @@ Méthode utilisée par outil et par OS :
 
 Points notables :
 - **VS Code/apt** (install.sh:111-121) : télécharge la clé GPG Microsoft, la place dans `/etc/apt/keyrings/`, ajoute la ligne `deb [...] https://packages.microsoft.com/repos/code stable main`, puis `apt-get install code`.
-- **Obsidian** n'a pas de dépôt officiel Linux : le script essaie dans l'ordre `snap` → `flatpak` → téléchargement direct du `.deb`/`.rpm` le plus récent via l'API GitHub (`api.github.com/repos/obsidianmd/obsidian-releases/releases/latest`).
+- **Obsidian** n'a pas de dépôt officiel Linux : le script essaie dans l'ordre `snap` → `flatpak` → téléchargement direct du `.deb`/`.rpm` en cherchant dans les releases GitHub récentes (`api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=10`) plutôt que la seule `/releases/latest`, qui peut pointer sur une release mobile-only sans installeur desktop (bug trouvé et corrigé en testant).
 - **Docker/Linux** : après installation, le script active/démarre le service (`systemctl enable --now docker`) et ajoute l'utilisateur courant au groupe `docker` (`usermod -aG docker`) pour éviter d'avoir à préfixer chaque commande par `sudo` — un déconnexion/reconnexion (ou reboot) est nécessaire pour que ce changement de groupe prenne effet.
 - **kubectl** n'a pas de paquet universellement à jour dans les dépôts distro par défaut : le script télécharge directement le binaire officiel correspondant à la dernière version stable (`dl.k8s.io/release/stable.txt`) et à l'architecture détectée (`amd64`/`arm64`), comme pour AWS CLI.
 - **Helm** utilise le script d'installation officiel du projet (`get-helm-3`), qui gère lui-même la détection d'architecture et les droits d'écriture dans `/usr/local/bin`.
@@ -347,6 +347,22 @@ La procédure est **la même** que sur la première machine, avec un point impor
 En résumé : même script, même flux, mais **une clé SSH distincte générée et ajoutée à GitHub pour chaque machine**.
 
 ---
+
+## Tests réels effectués sur cette machine (WSL/Debian, x86_64)
+
+Deux bugs supplémentaires trouvés et corrigés en testant au-delà de ce qui l'avait déjà été précédemment (clé SSH, git, vault, `--cloud-only`, `--extras-only`) :
+
+1. **`unzip` absent par défaut** sur cette machine (WSL minimal) — `install_awscli()` l'utilisait directement sans vérifier sa présence. Ajout de `ensure_unzip()` (même patron que `ensure_pip3`/`ensure_npm`), appelé dans `install_awscli` et le fallback Arch de `install_terraform`.
+2. **`install_obsidian()` cherchait un `.deb`/`.rpm` dans `/releases/latest`**, qui peut pointer sur une release mobile-only (`.apk` seul, sans installeur desktop) — vérifié en conditions réelles : la release "latest" d'Obsidian au moment du test n'avait qu'un `.apk`. Corrigé pour chercher dans les releases récentes (`/releases?per_page=10`, déjà triées du plus récent au plus ancien) plutôt que la seule "latest".
+
+Testés avec succès sans avoir besoin de `sudo` (donc sans le vérifier avec le mécanisme `have` habituel, en exécutant directement le corps de la fonction) :
+- `install_aws_sdk` / `install_gcp_sdk` : boto3 et google-api-python-client réellement installés et importables (pip3 déjà disponible en `--user`, sans `sudo`).
+- `install_kubectl`, `install_helm`, `install_yq`, `install_k9s`, `install_kubectx` : téléchargement + extraction + exécution du binaire (`--version`) validés pour chacun, seule l'étape finale `sudo install` vers `/usr/local/bin` n'a pas pu être exercée.
+- La récupération et le `gpg --dearmor` des clés de dépôt (Microsoft/VS Code, HashiCorp/Terraform, Google Cloud, GitHub CLI) : keyrings valides produits dans chaque cas.
+- Le zip AWS CLI v2 : contenu validé (`install` + `dist/`), le script d'installation officiel répond correctement à `--help`.
+- La régex de version Terraform (fallback Arch) : URL de téléchargement résultante vérifiée valide (HTTP 200, zip).
+
+**Toujours pas testé** : les commandes `apt-get install`/`dnf install`/`pacman -S` elles-mêmes et tout ce qui écrit dans des répertoires système (`/usr/local/bin`, `/etc/apt/`, `/usr/share/keyrings/`) — nécessitent un vrai mot de passe `sudo` interactif, indisponible dans cet environnement.
 
 ## Limitations connues
 
