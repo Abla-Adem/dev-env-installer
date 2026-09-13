@@ -29,7 +29,7 @@
 
     - name: Déterminer le chemin local du vault
       ansible.builtin.set_fact:
-        effective_vault_path: "{{ vault_path if vault_path | length > 0 else ansible_env.HOME + '/Documents/' + (effective_repo_url | basename | regex_replace('\\.git$', '')) }}"
+        effective_vault_path: "{{ vault_path if vault_path | length > 0 else ansible_facts['env']['HOME'] + '/Documents/' + (effective_repo_url | basename | regex_replace('\\.git$', '')) }}"
 
     - name: Cloner ou mettre à jour le dépôt (ansible.builtin.git gère les deux cas nativement)
       ansible.builtin.git:

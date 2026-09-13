@@ -52,13 +52,13 @@
 
         - name: Créer ~/.aws
           ansible.builtin.file:
-            path: "{{ ansible_env.HOME }}/.aws"
+            path: "{{ ansible_facts['env']['HOME'] }}/.aws"
             state: directory
             mode: "0700"
 
         - name: Écrire ~/.aws/credentials
           ansible.builtin.copy:
-            dest: "{{ ansible_env.HOME }}/.aws/credentials"
+            dest: "{{ ansible_facts['env']['HOME'] }}/.aws/credentials"
             mode: "0600"
             content: |
               [default]
@@ -68,7 +68,7 @@
 
         - name: Écrire ~/.aws/config
           ansible.builtin.copy:
-            dest: "{{ ansible_env.HOME }}/.aws/config"
+            dest: "{{ ansible_facts['env']['HOME'] }}/.aws/config"
             mode: "0600"
             content: |
               [default]

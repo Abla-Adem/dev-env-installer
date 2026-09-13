@@ -44,7 +44,7 @@
 
 - name: Ajouter l'utilisateur au groupe docker (Linux)
   ansible.builtin.user:
-    name: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
+    name: "{{ ansible_facts['env']['SUDO_USER'] | default(ansible_facts['env']['USER']) }}"
     groups: docker
     append: true
   when: ansible_facts['os_family'] != "Darwin"

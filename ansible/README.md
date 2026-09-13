@@ -4,7 +4,14 @@
 
 Ce dossier reprend **toutes** les fonctions de `bash/install.sh` : VS Code, Obsidian, Terraform, AWS CLI + boto3, gcloud + SDK Python GCP, Docker, kubectl, Helm, jq, Claude Code CLI, les 6 outils optionnels (`yq`, `k9s`, `kubectx`, `gh`, `direnv`, `shellcheck`), la génération de clé SSH, l'identité git, la configuration AWS/GCP, et le clonage/configuration du coffre-fort Obsidian.
 
-**⚠️ Non exécuté de bout en bout** : `ansible` n'a pas pu être installé dans l'environnement où ce playbook a été écrit (pas d'accès root pour `apt install python3-pip`/`python3-venv`, cf. [Limites](#limites-réelles-de-cette-implémentation)). Chaque tâche a été relue à la main et les modules vérifiés un par un, mais contrairement à `bash/install.sh` (qui a réellement tourné et dont les bugs trouvés ont été corrigés), rien ici n'a été validé par une exécution réelle. Relis avant de lancer sur une machine qui compte.
+**⚠️ Partiellement testé, pas en conditions réelles complètes.** `ansible` a été installé sans `sudo` (`pip install --user --break-system-packages`, même technique que le fallback PEP 668 du script bash) et le playbook a réellement tourné pour :
+- `ansible-lint` sur l'ensemble du playbook : 0 erreur de module/paramètre invalide (uniquement des nitpicks de style — noms de tâches, casse).
+- `-e ssh_only=true` : exécution réelle complète (`ok=20, changed=0, failed=0`) — clé SSH + identité git.
+- `-e vault_only=true` : exécution réelle complète (`ok=30, changed=0, failed=0`) — test SSH, clonage/pull du vault, dossier `.obsidian`, détection `xdg-open`.
+- `-e extras_only=true -e extras_only_list=gh,xyz` : sélection/validation confirmée (`gh` accepté et déjà détecté installé, `xyz` rejeté proprement).
+- Les 7 combinaisons de flags (`ssh_only`, `vault_only`, `cloud_only`, `extras_only`, `no_vault`, `no_cloud`, défaut) vérifiées une par une : la traduction en `skip_install`/`skip_ssh`/`skip_cloud`/`skip_vault` correspond exactement à la logique bash.
+
+**Ce qui n'a pas pu être testé** : toutes les tâches d'installation de paquets (`become: true`) — elles nécessitent un vrai mot de passe `sudo` interactif, indisponible dans cet environnement. `cloud_aws.yml`/`cloud_gcp.yml` n'ont pas non plus été exercées avec de vrais identifiants. Trois bugs réels ont été trouvés et corrigés grâce à ces tests (voir plus bas) — il est donc probable, mais pas garanti, que le reste (chemins d'installation par OS) contienne des erreurs similaires non détectées par la seule lecture. Teste sur une machine sacrifiable avant de t'y fier pour de vrai.
 
 ## Installation et lancement
 
@@ -91,9 +98,25 @@ Le script bash affiche un menu `1) yq  2) k9s  3) kubectx...` et accepte `2,4`. 
 - **`community.crypto.openssh_keypair`** ne régénère jamais une clé existante, sans code de vérification manuel.
 - **Un dry-run gratuit** : `ansible-playbook playbook.yml --check --ask-become-pass` (avec les limites habituelles du mode check sur les tâches `shell`/`command`, qui ne sont jamais simulées).
 
+## Bugs trouvés (et corrigés) en testant réellement
+
+Aucun n'était visible à la simple lecture — la valeur d'un test réel par rapport à une relecture :
+
+1. **`ansible.builtin.unarchive` n'a pas de paramètre `include`** (trouvé en relisant, avant même de tester) — utilisé pour n'extraire qu'un seul binaire d'une archive tar.gz (k9s, kubectx). Corrigé en extrayant dans `/tmp` puis en copiant le binaire voulu vers `/usr/local/bin`.
+2. **`ansible.builtin.apt_key` est déprécié** (trouvé en relisant) — remplacé par le téléchargement + `gpg --dearmor` vers un keyring, avec `signed-by=` dans la ligne `deb`, comme le fait déjà le script bash.
+3. **Le `Gathering Facts` implicite héritait de `become: true`** (trouvé en exécutant `-e ssh_only=true` : `sudo: a password is required` dès la première tâche, alors que ce mode ne devrait avoir besoin d'aucun privilège). Corrigé avec `gather_facts: false` + une tâche `ansible.builtin.setup` explicite en `become: false`.
+4. **`ssh -T ... | grep -q` échoue à tort** (trouvé en exécutant `-e vault_only=true` : la boucle d'attente SSH bouclait indéfiniment alors que l'authentification GitHub fonctionne bel et bien sur cette machine). `grep -q` sort dès son premier match, le `SIGPIPE` envoyé à `ssh` remonte comme un échec via `pipefail`. Corrigé en capturant la sortie dans une variable avant de la grepper — exactement ce que fait déjà `test_ssh_auth()` en bash, qui n'a jamais eu ce problème.
+
+## Ce qui est réellement plus simple qu'en bash
+
+- **Idempotence native** : `ansible.builtin.package`, `apt`, `dnf`, `pacman`, `homebrew` savent déjà s'il y a un changement à faire — pas besoin du `if have X; then return; fi` répété dans chaque fonction bash (on garde quand même une vérification `which` explicite dans ce playbook, pour rester lisible en parallèle du script bash).
+- **`ansible.builtin.git`** gère nativement clone-ou-pull en une seule tâche (`update: true`), alors que `setup_obsidian_vault()` en bash teste `[[ -d "$VAULT_PATH/.git" ]]` à la main.
+- **`community.crypto.openssh_keypair`** ne régénère jamais une clé existante, sans code de vérification manuel.
+- **Un dry-run gratuit** : `ansible-playbook playbook.yml --check --ask-become-pass` (avec les limites habituelles du mode check sur les tâches `shell`/`command`, qui ne sont jamais simulées).
+
 ## Limites réelles de cette implémentation
 
-- **Jamais exécutée** (voir l'avertissement en haut) — écrite et relue, pas testée.
+- **Les chemins d'installation par OS n'ont pas pu être testés** (nécessitent `sudo`) — voir l'avertissement en haut. Trois bugs réels ayant déjà été trouvés ailleurs en testant, il est probable qu'il en reste dans le code non exercé.
 - **`ansible.builtin.package` ne gère pas Homebrew** : chaque tâche multi-OS a une branche `homebrew`/`homebrew_cask` dédiée à côté du module générique pour Linux.
 - Suppose une architecture `x86_64`/`aarch64`/`arm64`, comme le script bash.
 - `community.general.flatpak` suppose que le remote `flathub` est déjà configuré sur la machine (le script bash fait la même hypothèse).

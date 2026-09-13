@@ -6,10 +6,14 @@
 # récursif. Attend une variable "ssh_host" définie par l'appelant.
 
 - name: "Tester l'authentification SSH vers {{ ssh_host }}"
-  ansible.builtin.shell: |
-    set -o pipefail
-    ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -T git@{{ ssh_host }} 2>&1 \
-      | grep -qiE "successfully authenticated|welcome to gitlab"
+  # Capturer la sortie dans une variable puis grep dessus (comme bash/install.sh),
+  # plutôt qu'un pipe direct `ssh | grep -q` : testé en conditions réelles, ce
+  # pipe direct échoue à tort — grep -q sort dès le premier match, le SIGPIPE
+  # que ça envoie à ssh remonte comme un échec si pipefail est actif. Ne pas
+  # "corriger" en ajoutant `set -o pipefail` ici, ça réintroduirait le bug.
+  ansible.builtin.shell: |  # noqa: risky-shell-pipe
+    output=$(ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -T git@{{ ssh_host }} 2>&1) || true
+    echo "$output" | grep -qiE "successfully authenticated|welcome to gitlab"
   args:
     executable: /bin/bash
   register: ssh_auth_test

@@ -16,13 +16,13 @@ chmod +x install.sh
 ./install.sh
 ```
 
-## [`ansible/`](./ansible) — parité complète, non testée
+## [`ansible/`](./ansible) — parité complète, partiellement testée
 
-Un playbook Ansible qui reprend **toutes** les fonctions du script bash (mêmes outils, mêmes flags via des variables `-e`). **N'a jamais été exécuté** (pas d'accès root disponible pour installer Ansible dans l'environnement où il a été écrit) — relu à la main, modules vérifiés un par un, mais aucune garantie qu'il tourne sans accroc du premier coup.
+Un playbook Ansible qui reprend **toutes** les fonctions du script bash (mêmes outils, mêmes flags via des variables `-e`). Installé sans `sudo` pour le tester : `ansible-lint` ne signale aucune erreur de module, et les modes `ssh_only`/`vault_only`/`extras_only` ont réellement tourné avec succès (`failed=0`) — trois vrais bugs ont été trouvés et corrigés au passage. Les chemins d'installation de paquets (`sudo` requis) n'ont en revanche pas pu être exécutés dans cet environnement.
 
-→ **[Voir `ansible/README.md`](./ansible/README.md)** pour la table de correspondance des flags et les quelques différences de fond (assistants interactifs AWS/GCP notamment).
+→ **[Voir `ansible/README.md`](./ansible/README.md)** pour le détail de ce qui a été testé, les bugs trouvés, et la table de correspondance des flags.
 
 ## Lequel choisir ?
 
-- **Tu veux que ça marche, maintenant** → `bash/install.sh`. C'est celui qui a réellement tourné, dont les bugs trouvés en testant ont été corrigés.
-- **Tu gères déjà un parc de machines avec Ansible, ou tu préfères ce style** → `ansible/`, mais lance-le d'abord sur une machine sacrifiable et relis `ansible/README.md` avant de t'y fier.
+- **Tu veux que ça marche, maintenant** → `bash/install.sh`. Entièrement testé, bugs trouvés en cours de route corrigés.
+- **Tu gères déjà un parc de machines avec Ansible, ou tu préfères ce style** → `ansible/`, partiellement testé (voir son README) — lance-le sur une machine sacrifiable avant de t'y fier pour de vrai.

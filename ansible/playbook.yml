@@ -9,8 +9,13 @@
 - name: Provisionner un poste de dev (parité avec bash/install.sh)
   hosts: local
   become: true
+  gather_facts: false
 
   pre_tasks:
+    - name: Récupérer les facts système (sans privilège — le gathering implicite hériterait de become:true)
+      ansible.builtin.setup:
+      become: false
+
     - name: Traduire les flags de haut niveau en skip_* (équivalent du parsing d'arguments bash)
       ansible.builtin.set_fact:
         skip_install: "{{ ssh_only or vault_only or cloud_only or extras_only }}"
