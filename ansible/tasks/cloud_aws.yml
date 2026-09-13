@@ -96,6 +96,13 @@
         msg: "AWS CLI déjà configuré et fonctionnel (identité vérifiée), skip."
       when: aws_identity.rc == 0
 
+    - name: Configuration AWS ignorée
+      ansible.builtin.debug:
+        msg: "Configuration AWS ignorée. Relance plus tard avec: -e cloud_only=true"
+      when:
+        - aws_identity.rc != 0
+        - not (aws_confirm.user_input is defined and aws_confirm.user_input | lower is match("^[oy]"))
+
 - name: AWS CLI non installé
   ansible.builtin.debug:
     msg: "AWS CLI non installé, configuration AWS ignorée."

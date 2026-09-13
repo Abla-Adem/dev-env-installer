@@ -75,6 +75,7 @@
           register: terraform_release
         - ansible.builtin.set_fact:
             terraform_version: "{{ terraform_release.json.tag_name | regex_replace('^v', '') }}"
+        - ansible.builtin.include_tasks: ensure_unzip.yml
         - ansible.builtin.unarchive:
             src: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
             dest: /usr/local/bin

@@ -22,6 +22,7 @@
       register: obsidian_pkg_managers
       changed_when: false
       failed_when: false
+      become: false
       loop: [snap, flatpak]
       when: ansible_facts['os_family'] != "Darwin"
 

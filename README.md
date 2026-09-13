@@ -16,13 +16,12 @@ chmod +x install.sh
 ./install.sh
 ```
 
-## [`ansible/`](./ansible) — parité complète, partiellement testée
+## [`ansible/`](./ansible) — parité complète, testée avec un run réel complet
 
-Un playbook Ansible qui reprend **toutes** les fonctions du script bash (mêmes outils, mêmes flags via des variables `-e`). Installé sans `sudo` pour le tester : `ansible-lint` ne signale aucune erreur de module, et les modes `ssh_only`/`vault_only`/`extras_only` ont réellement tourné avec succès (`failed=0`) — trois vrais bugs ont été trouvés et corrigés au passage. Les chemins d'installation de paquets (`sudo` requis) n'ont en revanche pas pu être exécutés dans cet environnement.
+Un playbook Ansible qui reprend **toutes** les fonctions du script bash (mêmes outils, mêmes flags via des variables `-e`). Le run par défaut complet (avec un vrai `sudo`, fourni par l'utilisateur dans un terminal séparé) a été exécuté de bout en bout avec succès (`failed=0`) : Obsidian, Docker, `unzip`, AWS CLI, Helm et jq réellement installés. Huit bugs réels ont été trouvés et corrigés au fil de ces tests. `--with-extras` et la configuration cloud avec de vrais identifiants restent les seuls chemins non exercés.
 
 → **[Voir `ansible/README.md`](./ansible/README.md)** pour le détail de ce qui a été testé, les bugs trouvés, et la table de correspondance des flags.
 
 ## Lequel choisir ?
 
-- **Tu veux que ça marche, maintenant** → `bash/install.sh`. Entièrement testé, bugs trouvés en cours de route corrigés.
-- **Tu gères déjà un parc de machines avec Ansible, ou tu préfères ce style** → `ansible/`, partiellement testé (voir son README) — lance-le sur une machine sacrifiable avant de t'y fier pour de vrai.
+Les deux ont maintenant tourné pour de vrai avec succès sur la même machine. `bash/install.sh` reste le choix par défaut (zéro dépendance, plus simple à lire/modifier) ; `ansible/` convient si tu gères déjà un parc de machines avec Ansible ou préfères ce style déclaratif.

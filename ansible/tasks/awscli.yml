@@ -22,6 +22,7 @@
       vars:
         aws_arch: "{{ 'aarch64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'x86_64' }}"
       block:
+        - ansible.builtin.include_tasks: ensure_unzip.yml
         - ansible.builtin.unarchive:
             src: "https://awscli.amazonaws.com/awscli-exe-linux-{{ aws_arch }}.zip"
             dest: /tmp

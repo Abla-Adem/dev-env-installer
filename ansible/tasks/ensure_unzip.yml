@@ -1,0 +1,17 @@
+---
+# Équivalent de ensure_unzip() dans bash/install.sh — nécessaire pour que
+# ansible.builtin.unarchive puisse extraire un .zip (il n'a pas de fallback
+# Python pur pour les .zip sur tous les systèmes ; testé en conditions
+# réelles : sans unzip/zipinfo installé, l'extraction échoue).
+- name: Vérifier si unzip est installé
+  ansible.builtin.command: which unzip
+  register: unzip_check
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Installer unzip
+  ansible.builtin.package:
+    name: unzip
+    state: present
+  when: unzip_check.rc != 0
