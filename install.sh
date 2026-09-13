@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# install.sh — installe Obsidian, Terraform, AWS CLI, Google Cloud SDK, VS Code
-# sur Linux (Debian/Ubuntu, Fedora/RHEL, Arch) et macOS (Homebrew),
-# puis génère (si besoin) une clé SSH et l'affiche pour la configuration Git.
+# install.sh — installe Obsidian, Terraform, AWS CLI, Google Cloud SDK, VS Code,
+# Docker, kubectl et jq sur Linux (Debian/Ubuntu, Fedora/RHEL, Arch) et macOS
+# (Homebrew), puis génère (si besoin) une clé SSH et l'affiche pour la
+# configuration Git.
 #
 # Usage:
 #   ./install.sh                     # installe tout + clone le repo + configure le vault Obsidian
@@ -11,6 +12,7 @@
 #   ./install.sh --vault-only        # pas d'install, juste clé SSH + git identity + clonage/config du vault
 #   ./install.sh --cloud-only        # pas d'install/ssh/vault, juste configuration interactive AWS + GCP
 #   ./install.sh --no-cloud          # installe/clone tout mais saute la configuration AWS/GCP
+#   ./install.sh --with-extras       # installe en plus les outils optionnels (yq, k9s, kubectx, gh, direnv, shellcheck)
 #   SSH_KEY_COMMENT="you@example.com" REPO_URL="git@github.com:user/repo.git" ./install.sh
 #   GIT_USER_NAME="Ton Nom" GIT_USER_EMAIL="you@example.com" ./install.sh   # évite les prompts interactifs
 #
@@ -25,10 +27,22 @@ SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_${SSH_KEY_TYPE}}"
 REPO_URL="${REPO_URL:-git@github.com:Abla-Adem/sync-personal-doc.git}"
 VAULT_PATH="${VAULT_PATH:-}"
 
+# Outils optionnels : pas installés par défaut, listés en fin de run normal.
+# Format de chaque entrée: "commande|description".
+OPTIONAL_TOOLS=(
+  "yq|Équivalent de jq mais pour YAML — pratique avec Helm/Kubernetes/CI."
+  "k9s|Interface terminal (TUI) pour naviguer et débugger un cluster Kubernetes."
+  "kubectx|Bascule rapide entre contextes et namespaces Kubernetes (inclut kubens)."
+  "gh|CLI officiel GitHub : créer des repos/PR, gérer les issues, etc."
+  "direnv|Charge automatiquement des variables d'environnement par dossier."
+  "shellcheck|Linter pour scripts bash/shell."
+)
+
 SKIP_INSTALL=false
 SKIP_SSH=false
 SKIP_CLOUD=false
 SKIP_VAULT=false
+WITH_EXTRAS=false
 for arg in "$@"; do
   case "$arg" in
     --ssh-only)   SKIP_INSTALL=true; SKIP_CLOUD=true; SKIP_VAULT=true ;;
@@ -36,6 +50,7 @@ for arg in "$@"; do
     --vault-only) SKIP_INSTALL=true; SKIP_CLOUD=true ;;
     --cloud-only) SKIP_INSTALL=true; SKIP_SSH=true; SKIP_VAULT=true ;;
     --no-cloud)   SKIP_CLOUD=true ;;
+    --with-extras) WITH_EXTRAS=true ;;
   esac
 done
 
@@ -228,6 +243,36 @@ install_terraform() {
 }
 
 # ---------------------------------------------------------------------------
+# Python / pip (nécessaire pour les SDK AWS et GCP)
+# ---------------------------------------------------------------------------
+ensure_pip3() {
+  if have pip3; then return; fi
+  log "pip3 non trouvé, installation..."
+  case "$PKG_MGR" in
+    brew)   brew install python ;;
+    apt)    $SUDO apt-get update -y && $SUDO apt-get install -y python3-pip ;;
+    dnf)    $SUDO dnf install -y python3-pip ;;
+    pacman) $SUDO pacman -S --noconfirm --needed python-pip ;;
+    *)      err "Impossible d'installer pip3 automatiquement sur ce système." ;;
+  esac
+}
+
+pip_install() {
+  local err_log
+  err_log=$(mktemp)
+  if ! pip3 install --user "$@" 2> "$err_log"; then
+    if grep -qi "externally-managed-environment" "$err_log"; then
+      pip3 install --user --break-system-packages "$@"
+    else
+      cat "$err_log" >&2
+      rm -f "$err_log"
+      return 1
+    fi
+  fi
+  rm -f "$err_log"
+}
+
+# ---------------------------------------------------------------------------
 # AWS CLI
 # ---------------------------------------------------------------------------
 install_awscli() {
@@ -258,6 +303,20 @@ install_awscli() {
       err "Gestionnaire de paquets non supporté pour AWS CLI."
       ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# SDK AWS pour Python (boto3)
+# ---------------------------------------------------------------------------
+install_aws_sdk() {
+  ensure_pip3
+  if ! have pip3; then err "pip3 indisponible, SDK AWS (boto3) non installé."; return; fi
+  if python3 -c "import boto3" 2>/dev/null; then
+    log "boto3 déjà installé, skip."
+    return
+  fi
+  log "Installation du SDK AWS pour Python (boto3)..."
+  pip_install boto3
 }
 
 # ---------------------------------------------------------------------------
@@ -301,6 +360,296 @@ EOF
       curl -fsSL https://sdk.cloud.google.com | bash -s -- --disable-prompts
       ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# SDK GCP pour Python (google-api-python-client + google-auth)
+# ---------------------------------------------------------------------------
+install_gcp_sdk() {
+  ensure_pip3
+  if ! have pip3; then err "pip3 indisponible, SDK GCP non installé."; return; fi
+  if python3 -c "import googleapiclient" 2>/dev/null; then
+    log "SDK GCP (google-api-python-client) déjà installé, skip."
+    return
+  fi
+  log "Installation du SDK GCP pour Python (google-api-python-client, google-auth)..."
+  pip_install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+}
+
+# ---------------------------------------------------------------------------
+# Docker
+# ---------------------------------------------------------------------------
+install_docker() {
+  if have docker; then log "Docker déjà installé, skip."; return; fi
+  log "Installation de Docker..."
+  case "$PKG_MGR" in
+    brew)
+      brew install --cask docker
+      warn "Lance l'application Docker.app au moins une fois pour terminer l'installation du moteur."
+      ;;
+    apt|dnf)
+      curl -fsSL https://get.docker.com | $SUDO sh
+      ;;
+    pacman)
+      $SUDO pacman -S --noconfirm --needed docker docker-compose
+      ;;
+    *)
+      err "Gestionnaire de paquets non supporté pour Docker."
+      return
+      ;;
+  esac
+
+  if [[ "$OS" == "Linux" ]]; then
+    if have systemctl; then
+      $SUDO systemctl enable --now docker || true
+    fi
+    if ! groups "$USER" 2>/dev/null | grep -q '\bdocker\b'; then
+      $SUDO usermod -aG docker "$USER" || true
+      warn "Utilisateur ajouté au groupe 'docker'. Déconnecte-toi/reconnecte-toi (ou redémarre) pour utiliser docker sans sudo."
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# kubectl (Kubernetes CLI)
+# ---------------------------------------------------------------------------
+install_kubectl() {
+  if have kubectl; then log "kubectl déjà installé, skip."; return; fi
+  log "Installation de kubectl..."
+  case "$PKG_MGR" in
+    brew)
+      brew install kubectl
+      ;;
+    apt|dnf|pacman)
+      local k8s_arch kver
+      case "$ARCH" in
+        x86_64) k8s_arch="amd64" ;;
+        aarch64|arm64) k8s_arch="arm64" ;;
+        *) err "Architecture non supportée pour kubectl: $ARCH"; return ;;
+      esac
+      kver=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+      curl -fL "https://dl.k8s.io/release/${kver}/bin/linux/${k8s_arch}/kubectl" -o /tmp/kubectl
+      chmod +x /tmp/kubectl
+      $SUDO install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+      rm -f /tmp/kubectl
+      ;;
+    *)
+      err "Gestionnaire de paquets non supporté pour kubectl."
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Helm (gestionnaire de charts Kubernetes)
+# ---------------------------------------------------------------------------
+install_helm() {
+  if have helm; then log "Helm déjà installé, skip."; return; fi
+  log "Installation de Helm..."
+  case "$PKG_MGR" in
+    brew)
+      brew install helm
+      ;;
+    apt|dnf|pacman|*)
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# jq
+# ---------------------------------------------------------------------------
+install_jq() {
+  if have jq; then log "jq déjà installé, skip."; return; fi
+  log "Installation de jq..."
+  case "$PKG_MGR" in
+    brew) brew install jq ;;
+    apt)  $SUDO apt-get update -y && $SUDO apt-get install -y jq ;;
+    dnf)  $SUDO dnf install -y jq ;;
+    pacman) $SUDO pacman -S --noconfirm --needed jq ;;
+    *) err "Gestionnaire de paquets non supporté pour jq." ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Claude Code CLI (nécessite Node.js/npm)
+# ---------------------------------------------------------------------------
+ensure_npm() {
+  if have npm; then return; fi
+  log "npm non trouvé, installation de Node.js..."
+  case "$PKG_MGR" in
+    brew)   brew install node ;;
+    apt)    $SUDO apt-get update -y && $SUDO apt-get install -y nodejs npm ;;
+    dnf)    $SUDO dnf install -y nodejs npm ;;
+    pacman) $SUDO pacman -S --noconfirm --needed nodejs npm ;;
+    *)      err "Impossible d'installer Node.js/npm automatiquement sur ce système." ;;
+  esac
+}
+
+install_claude_code() {
+  if have claude; then log "Claude Code CLI déjà installé, skip."; return; fi
+  ensure_npm
+  if ! have npm; then err "npm indisponible, Claude Code CLI non installé."; return; fi
+  log "Installation de Claude Code CLI (npm)..."
+  if [[ "$PKG_MGR" == "brew" ]]; then
+    npm install -g @anthropic-ai/claude-code
+  else
+    $SUDO npm install -g @anthropic-ai/claude-code
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Outils optionnels (--with-extras)
+# ---------------------------------------------------------------------------
+install_yq() {
+  if have yq; then log "yq déjà installé, skip."; return; fi
+  log "Installation de yq..."
+  case "$PKG_MGR" in
+    brew) brew install yq ;;
+    *)
+      local yq_arch ver
+      case "$ARCH" in
+        x86_64) yq_arch="amd64" ;;
+        aarch64|arm64) yq_arch="arm64" ;;
+        *) err "Architecture non supportée pour yq: $ARCH"; return ;;
+      esac
+      ver=$(curl -fsSL https://api.github.com/repos/mikefarah/yq/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+      curl -fL "https://github.com/mikefarah/yq/releases/download/${ver}/yq_linux_${yq_arch}" -o /tmp/yq
+      chmod +x /tmp/yq
+      $SUDO install -o root -g root -m 0755 /tmp/yq /usr/local/bin/yq
+      rm -f /tmp/yq
+      ;;
+  esac
+}
+
+install_k9s() {
+  if have k9s; then log "k9s déjà installé, skip."; return; fi
+  log "Installation de k9s..."
+  case "$PKG_MGR" in
+    brew) brew install k9s ;;
+    *)
+      local k9s_arch ver
+      case "$ARCH" in
+        x86_64) k9s_arch="amd64" ;;
+        aarch64|arm64) k9s_arch="arm64" ;;
+        *) err "Architecture non supportée pour k9s: $ARCH"; return ;;
+      esac
+      ver=$(curl -fsSL https://api.github.com/repos/derailed/k9s/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+      curl -fL "https://github.com/derailed/k9s/releases/download/${ver}/k9s_Linux_${k9s_arch}.tar.gz" -o /tmp/k9s.tar.gz
+      tar -xzf /tmp/k9s.tar.gz -C /tmp k9s
+      $SUDO install -o root -g root -m 0755 /tmp/k9s /usr/local/bin/k9s
+      rm -f /tmp/k9s.tar.gz /tmp/k9s
+      ;;
+  esac
+}
+
+install_kubectx() {
+  if have kubectx; then log "kubectx/kubens déjà installés, skip."; return; fi
+  log "Installation de kubectx/kubens..."
+  case "$PKG_MGR" in
+    brew) brew install kubectx ;;
+    *)
+      local kx_arch ver bin
+      case "$ARCH" in
+        x86_64) kx_arch="x86_64" ;;
+        aarch64|arm64) kx_arch="arm64" ;;
+        *) err "Architecture non supportée pour kubectx: $ARCH"; return ;;
+      esac
+      ver=$(curl -fsSL https://api.github.com/repos/ahmetb/kubectx/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+      for bin in kubectx kubens; do
+        curl -fL "https://github.com/ahmetb/kubectx/releases/download/${ver}/${bin}_${ver}_linux_${kx_arch}.tar.gz" -o "/tmp/${bin}.tar.gz"
+        tar -xzf "/tmp/${bin}.tar.gz" -C /tmp "$bin"
+        $SUDO install -o root -g root -m 0755 "/tmp/${bin}" "/usr/local/bin/${bin}"
+        rm -f "/tmp/${bin}.tar.gz" "/tmp/${bin}"
+      done
+      ;;
+  esac
+}
+
+install_gh() {
+  if have gh; then log "GitHub CLI (gh) déjà installé, skip."; return; fi
+  log "Installation de GitHub CLI (gh)..."
+  case "$PKG_MGR" in
+    brew)
+      brew install gh
+      ;;
+    apt)
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | $SUDO dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
+        $SUDO tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+      $SUDO apt-get update -y
+      $SUDO apt-get install -y gh
+      ;;
+    dnf)
+      $SUDO dnf install -y 'dnf-command(config-manager)'
+      $SUDO dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+      $SUDO dnf install -y gh
+      ;;
+    pacman)
+      $SUDO pacman -S --noconfirm --needed github-cli
+      ;;
+    *)
+      err "Gestionnaire de paquets non supporté pour gh."
+      ;;
+  esac
+}
+
+install_direnv() {
+  if have direnv; then log "direnv déjà installé, skip."; return; fi
+  log "Installation de direnv..."
+  case "$PKG_MGR" in
+    brew)   brew install direnv ;;
+    apt)    $SUDO apt-get update -y && $SUDO apt-get install -y direnv ;;
+    dnf)    $SUDO dnf install -y direnv ;;
+    pacman) $SUDO pacman -S --noconfirm --needed direnv ;;
+    *)      err "Gestionnaire de paquets non supporté pour direnv." ;;
+  esac
+}
+
+install_shellcheck() {
+  if have shellcheck; then log "shellcheck déjà installé, skip."; return; fi
+  log "Installation de shellcheck..."
+  case "$PKG_MGR" in
+    brew)   brew install shellcheck ;;
+    apt)    $SUDO apt-get update -y && $SUDO apt-get install -y shellcheck ;;
+    dnf)    $SUDO dnf install -y ShellCheck ;;
+    pacman) $SUDO pacman -S --noconfirm --needed shellcheck ;;
+    *)      err "Gestionnaire de paquets non supporté pour shellcheck." ;;
+  esac
+}
+
+install_optional_tool() {
+  case "$1" in
+    yq)         install_yq ;;
+    k9s)        install_k9s ;;
+    kubectx)    install_kubectx ;;
+    gh)         install_gh ;;
+    direnv)     install_direnv ;;
+    shellcheck) install_shellcheck ;;
+  esac
+}
+
+print_optional_tools_summary() {
+  local entry name desc missing=()
+  for entry in "${OPTIONAL_TOOLS[@]}"; do
+    name="${entry%%|*}"
+    desc="${entry#*|}"
+    have "$name" || missing+=("$entry")
+  done
+  [[ ${#missing[@]} -eq 0 ]] && return
+
+  echo
+  echo "=================================================================="
+  echo " Outils optionnels non installés (utiles mais pas obligatoires) :"
+  echo "=================================================================="
+  for entry in "${missing[@]}"; do
+    name="${entry%%|*}"
+    desc="${entry#*|}"
+    printf "  - %-10s %s\n" "$name" "$desc"
+  done
+  echo
+  echo "Pour tous les installer : ./install.sh --with-extras"
+  echo "=================================================================="
+  echo
 }
 
 # ---------------------------------------------------------------------------
@@ -526,7 +875,21 @@ main() {
     install_obsidian
     install_terraform
     install_awscli
+    install_aws_sdk
     install_gcloud
+    install_gcp_sdk
+    install_docker
+    install_kubectl
+    install_helm
+    install_jq
+    install_claude_code
+
+    if [[ "$WITH_EXTRAS" == true ]]; then
+      local entry
+      for entry in "${OPTIONAL_TOOLS[@]}"; do
+        install_optional_tool "${entry%%|*}"
+      done
+    fi
   fi
 
   if [[ "$SKIP_SSH" == false ]]; then
@@ -541,6 +904,10 @@ main() {
 
   if [[ "$SKIP_VAULT" == false ]]; then
     setup_obsidian_vault
+  fi
+
+  if [[ "$SKIP_INSTALL" == false ]]; then
+    print_optional_tools_summary
   fi
 
   log "Terminé."

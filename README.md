@@ -19,18 +19,33 @@ Script bash unique (`install.sh`) qui installe un environnement de dev complet s
 ```
 main()
  ├─ detect_pkg_manager()        → détermine OS + gestionnaire de paquets
- ├─ (si installs pas sautés)
+ ├─ (si installs pas sautés: SKIP_INSTALL)
  │   ├─ ensure_brew()           → macOS seulement
  │   ├─ install_vscode()
  │   ├─ install_obsidian()
  │   ├─ install_terraform()
  │   ├─ install_awscli()
- │   └─ install_gcloud()
- ├─ generate_ssh_key()          → toujours exécuté
- └─ (si vault pas sauté)
-     └─ setup_obsidian_vault()
-         ├─ wait_for_git_ssh()  → boucle bloquante tant que l'auth SSH échoue
-         └─ git clone + mkdir .obsidian + ouverture Obsidian
+ │   ├─ install_aws_sdk()       → boto3 (Python)
+ │   ├─ install_gcloud()
+ │   ├─ install_gcp_sdk()       → google-api-python-client + google-auth (Python)
+ │   ├─ install_docker()
+ │   ├─ install_kubectl()
+ │   ├─ install_helm()
+ │   ├─ install_jq()
+ │   ├─ install_claude_code()   → npm, installe Node.js si besoin
+ │   └─ (si --with-extras) install_optional_tool() pour chaque OPTIONAL_TOOLS
+ ├─ (si ssh pas sauté: SKIP_SSH)
+ │   ├─ generate_ssh_key()
+ │   └─ configure_git_identity()
+ ├─ (si cloud pas sauté: SKIP_CLOUD)
+ │   ├─ configure_aws()
+ │   └─ configure_gcp()
+ ├─ (si vault pas sauté: SKIP_VAULT)
+ │   └─ setup_obsidian_vault()
+ │       ├─ wait_for_git_ssh()  → boucle bloquante tant que l'auth SSH échoue
+ │       └─ git clone + mkdir .obsidian + ouverture Obsidian
+ └─ (si installs pas sautés) print_optional_tools_summary()
+     → liste les outils optionnels encore manquants, avec description
 ```
 
 Chaque fonction d'installation est **idempotente** : elle vérifie d'abord si l'outil est déjà présent (`have <commande>`) et fait `return` immédiatement si oui — on peut relancer le script sans rien casser.
@@ -41,23 +56,25 @@ Chaque fonction d'installation est **idempotente** : elle vérifie d'abord si l'
 
 | Flag | Effet |
 |---|---|
-| *(aucun)* | Installe tout, génère la clé SSH, configure git, configure AWS/GCP, clone le repo et configure le vault |
+| *(aucun)* | Installe tout, génère la clé SSH, configure git, configure AWS/GCP, clone le repo et configure le vault, puis liste les outils optionnels manquants |
 | `--ssh-only` | Saute installations, cloud et vault : ne fait que la clé SSH + identité git |
 | `--no-vault` | Fait tout le reste, mais saute le clonage/vault |
 | `--vault-only` | Saute installations et cloud : ne fait que la clé SSH + identité git + clonage/vault |
 | `--cloud-only` | Saute installations, ssh et vault : ne fait que la configuration interactive AWS + GCP |
 | `--no-cloud` | Fait tout le reste, mais saute la configuration AWS/GCP |
+| `--with-extras` | En plus d'un run normal, installe aussi tous les outils optionnels (`yq`, `k9s`, `kubectx`, `gh`, `direnv`, `shellcheck`) |
 
-En interne (install.sh:26-37), ces flags positionnent quatre booléens :
+En interne, ces flags positionnent cinq booléens :
 
 ```bash
 SKIP_INSTALL=false
 SKIP_SSH=false
 SKIP_CLOUD=false
 SKIP_VAULT=false
+WITH_EXTRAS=false
 ```
 
-`main()` (install.sh:433-454) lit ensuite ces deux variables pour décider quels blocs exécuter.
+`main()` lit ensuite ces variables pour décider quels blocs exécuter.
 
 ---
 
@@ -65,7 +82,7 @@ SKIP_VAULT=false
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `SSH_KEY_COMMENT` | `helpjudesavetheworld@gmail.com` | Commentaire embarqué dans la clé SSH (généralement ton email) |
+| `SSH_KEY_COMMENT` | `ablaadem3@gmail.com` | Commentaire embarqué dans la clé SSH (généralement ton email) |
 | `SSH_KEY_PATH` | `~/.ssh/id_ed25519` | Emplacement de la clé privée/publique |
 | `REPO_URL` | `git@github.com:Abla-Adem/sync-personal-doc.git` | URL du dépôt Git à cloner comme coffre-fort (surchargeable) |
 | `VAULT_PATH` | *(vide → prompt, puis `~/Documents/<nom-du-repo>`)* | Dossier local du vault |
@@ -102,7 +119,7 @@ Toutes les commandes d'installation système sont préfixées par `$SUDO` — vi
 
 ### 3. Installation de chaque outil
 
-Chaque fonction (`install_vscode`, `install_obsidian`, `install_terraform`, `install_awscli`, `install_gcloud`) suit le même patron :
+Chaque fonction (`install_vscode`, `install_obsidian`, `install_terraform`, `install_awscli`, `install_gcloud`, `install_docker`, `install_kubectl`, `install_helm`, `install_jq`, `install_claude_code`) suit le même patron :
 
 ```bash
 install_X() {
@@ -126,14 +143,48 @@ Méthode utilisée par outil et par OS :
 | **Terraform** | `brew install hashicorp/tap/terraform` | Dépôt officiel HashiCorp | Dépôt officiel HashiCorp | `pacman -S terraform`, fallback binaire zip officiel |
 | **AWS CLI v2** | `brew install awscli` | Installeur officiel AWS (`awscliv2.zip`) | idem | idem |
 | **gcloud (GCP)** | `brew install --cask google-cloud-sdk` | Dépôt officiel `packages.cloud.google.com` | Dépôt `.repo` Google | Script officiel `sdk.cloud.google.com` (pas de paquet natif fiable) |
+| **Docker** | `brew install --cask docker` | Script officiel `get.docker.com` | Script officiel `get.docker.com` | `pacman -S docker docker-compose` |
+| **kubectl** | `brew install kubectl` | Binaire officiel `dl.k8s.io` (version stable, arch détectée) | idem | idem |
+| **Helm** | `brew install helm` | Script officiel `get-helm-3` | idem | idem |
+| **jq** | `brew install jq` | `apt-get install jq` | `dnf install jq` | `pacman -S jq` |
+| **Claude Code CLI** | `npm install -g @anthropic-ai/claude-code` (Node.js via `brew install node` si absent) | idem (Node.js via `apt-get install nodejs npm` si absent) | idem (`dnf`) | idem (`pacman`) |
 
 Points notables :
-- **VS Code/apt** (install.sh:89-99) : télécharge la clé GPG Microsoft, la place dans `/etc/apt/keyrings/`, ajoute la ligne `deb [...] https://packages.microsoft.com/repos/code stable main`, puis `apt-get install code`.
+- **VS Code/apt** (install.sh:111-121) : télécharge la clé GPG Microsoft, la place dans `/etc/apt/keyrings/`, ajoute la ligne `deb [...] https://packages.microsoft.com/repos/code stable main`, puis `apt-get install code`.
 - **Obsidian** n'a pas de dépôt officiel Linux : le script essaie dans l'ordre `snap` → `flatpak` → téléchargement direct du `.deb`/`.rpm` le plus récent via l'API GitHub (`api.github.com/repos/obsidianmd/obsidian-releases/releases/latest`).
-- **AWS CLI** (install.sh:226-254) détecte l'architecture (`x86_64` vs `aarch64`) pour choisir le bon zip, et utilise `--update` si une install précédente est détectée dans `/usr/local/aws-cli/v2/current/bin/aws`.
+- **Docker/Linux** : après installation, le script active/démarre le service (`systemctl enable --now docker`) et ajoute l'utilisateur courant au groupe `docker` (`usermod -aG docker`) pour éviter d'avoir à préfixer chaque commande par `sudo` — un déconnexion/reconnexion (ou reboot) est nécessaire pour que ce changement de groupe prenne effet.
+- **kubectl** n'a pas de paquet universellement à jour dans les dépôts distro par défaut : le script télécharge directement le binaire officiel correspondant à la dernière version stable (`dl.k8s.io/release/stable.txt`) et à l'architecture détectée (`amd64`/`arm64`), comme pour AWS CLI.
+- **Helm** utilise le script d'installation officiel du projet (`get-helm-3`), qui gère lui-même la détection d'architecture et les droits d'écriture dans `/usr/local/bin`.
+- **AWS CLI** (install.sh:278-306) détecte l'architecture (`x86_64` vs `aarch64`) pour choisir le bon zip, et utilise `--update` si une install précédente est détectée dans `/usr/local/aws-cli/v2/current/bin/aws`.
 - **gcloud sur Arch/unknown** : pas de paquet pacman officiel fiable, donc bascule sur le script d'installation officiel Google en une ligne.
+- **Claude Code CLI** dépend de Node.js/npm : `ensure_npm()` l'installe automatiquement si absent, avant de lancer `npm install -g @anthropic-ai/claude-code` (sans `sudo` sur macOS où `brew` gère déjà les permissions npm, avec `sudo` sur Linux où npm système écrit dans `/usr/lib/node_modules`).
 
-### 4. Génération de la clé SSH — `generate_ssh_key()` (install.sh:302-330)
+### 4. SDK Python (AWS et GCP) — `install_aws_sdk()` / `install_gcp_sdk()`
+
+Ces deux fonctions installent des **bibliothèques Python**, pas des CLI — utile pour scripter l'infra en Python plutôt qu'en bash pur.
+
+- **`ensure_pip3()`** : installe `python3-pip` (apt/dnf), `python-pip` (pacman) ou `brew install python` si `pip3` est absent.
+- **`pip_install()`** : wrapper autour de `pip3 install --user`. Sur Debian/Ubuntu récents (PEP 668), un `pip install` système est bloqué avec l'erreur `externally-managed-environment` — la fonction détecte ce cas précis dans la sortie d'erreur et relance automatiquement avec `--break-system-packages`.
+- **`install_aws_sdk()`** : vérifie `python3 -c "import boto3"`, sinon installe `boto3` (le SDK AWS officiel pour Python).
+- **`install_gcp_sdk()`** : vérifie `import googleapiclient`, sinon installe `google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib`. Il n'existe pas d'équivalent pip unique à `boto3` côté Google (les libs `google-cloud-*` sont éclatées par service) — ce paquet couvre l'accès générique aux API Google, à compléter au besoin avec une lib spécifique (`google-cloud-storage`, `google-cloud-compute`, ...).
+
+### 5. Outils optionnels — `OPTIONAL_TOOLS`, `install_optional_tool()`, `print_optional_tools_summary()`
+
+Six outils utiles mais non indispensables, **jamais installés par défaut** :
+
+| Outil | Description | Méthode d'installation |
+|---|---|---|
+| `yq` | Équivalent de `jq` pour YAML | Binaire GitHub `mikefarah/yq` (Linux) / `brew install yq` |
+| `k9s` | TUI pour naviguer/débugger un cluster Kubernetes | Binaire GitHub `derailed/k9s` / `brew install k9s` |
+| `kubectx` | Bascule rapide de contexte/namespace K8s (inclut `kubens`) | Binaires GitHub `ahmetb/kubectx` / `brew install kubectx` |
+| `gh` | CLI officiel GitHub | Dépôt officiel `cli.github.com` (apt/dnf), `pacman -S github-cli`, `brew install gh` |
+| `direnv` | Variables d'environnement automatiques par dossier | Paquet natif (apt/dnf/pacman) / `brew install direnv` |
+| `shellcheck` | Linter bash/shell | Paquet natif (`ShellCheck` sur dnf) / `brew install shellcheck` |
+
+- Deux façons de les obtenir : `./install.sh --with-extras` (installe les six immédiatement) ou individuellement plus tard en appelant la fonction correspondante.
+- **`print_optional_tools_summary()`** tourne à la toute fin d'un run normal (pas en `--ssh-only`/`--vault-only`/`--cloud-only`) : elle boucle sur `OPTIONAL_TOOLS`, ne garde que ceux pour lesquels `have <commande>` échoue, et affiche leur nom + description + rappel de `--with-extras` — uniquement s'il en manque au moins un.
+
+### 6. Génération de la clé SSH — `generate_ssh_key()` (install.sh:658-682)
 
 ```bash
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -147,7 +198,7 @@ cat "${SSH_KEY_PATH}.pub"   # affichage
 - La clé est chargée dans `ssh-agent` pour que Git puisse s'en servir immédiatement.
 - Affiche la clé publique + les liens directs GitHub/GitLab + les commandes `git config --global user.name/email` prêtes à copier.
 
-### 5. Attente de la configuration Git — `test_ssh_auth()` / `wait_for_git_ssh()` (install.sh:335-360)
+### 7. Attente de la configuration Git — `test_ssh_auth()` / `wait_for_git_ssh()` (install.sh:769-794)
 
 C'est le mécanisme qui **bloque le script tant que la clé n'est pas ajoutée** sur l'hébergeur :
 
@@ -176,7 +227,7 @@ wait_for_git_ssh() {
 
 Boucle `until` : tant que `test_ssh_auth` échoue, le script **attend une action humaine** (ajouter la clé sur GitHub/GitLab), puis retente à chaque appui sur Entrée. Taper `skip` sort de la boucle sans garantie (le clonage suivant pourra échouer si la clé n'est vraiment pas configurée).
 
-### 6. Configuration interactive AWS / GCP — `configure_aws()` / `configure_gcp()`
+### 8. Configuration interactive AWS / GCP — `configure_aws()` / `configure_gcp()`
 
 Pensées pour être relancées seules, une fois que tu as reçu tes accès (clé AWS, compte GCP) sans devoir tout réinstaller (`./install.sh --cloud-only`).
 
@@ -186,7 +237,7 @@ Pensées pour être relancées seules, une fois que tu as reçu tes accès (clé
 
 Ni l'une ni l'autre ne stocke de secret dans le script : `aws configure` écrit dans `~/.aws/credentials`, `gcloud init` gère son propre stockage — comportement natif des CLI, pas géré par `install.sh`.
 
-### 7. Configuration du coffre-fort Obsidian — `setup_obsidian_vault()` (install.sh:377-428)
+### 9. Configuration du coffre-fort Obsidian — `setup_obsidian_vault()` (install.sh:811-862)
 
 Étapes dans l'ordre :
 
@@ -200,7 +251,7 @@ Ni l'une ni l'autre ne stocke de secret dans le script : `aws configure` écrit 
    ```
    → relancer le script sur un vault déjà cloné fait un simple `pull`, pas de re-clone.
 5. **Marque le dossier comme vault Obsidian** : `mkdir -p "$VAULT_PATH/.obsidian"`. C'est la seule condition nécessaire pour qu'Obsidian reconnaisse un dossier comme coffre-fort — pas besoin de fichiers de config particuliers, Obsidian les crée à la première ouverture.
-6. **Tente d'ouvrir Obsidian automatiquement** via l'URI officiel `obsidian://open?path=<chemin encodé>`, déclenché par `open` (macOS) ou `xdg-open` (Linux avec environnement graphique). La fonction `urlencode()` (install.sh:365-375) encode caractères par caractère (garde lettres/chiffres/`.~_/-`, encode le reste en `%XX`) pour gérer les chemins avec espaces ou accents.
+6. **Tente d'ouvrir Obsidian automatiquement** via l'URI officiel `obsidian://open?path=<chemin encodé>`, déclenché par `open` (macOS) ou `xdg-open` (Linux avec environnement graphique). La fonction `urlencode()` (install.sh:799-809) encode caractères par caractère (garde lettres/chiffres/`.~_/-`, encode le reste en `%XX`) pour gérer les chemins avec espaces ou accents.
 7. Si aucun outil d'ouverture n'est disponible (ex: WSL sans intégration GUI), affiche simplement le chemin et l'instruction manuelle *"Open folder as vault"*.
 
 ---
@@ -239,6 +290,11 @@ REPO_URL="git@github.com:user/vault.git" ./install.sh --vault-only
 ./install.sh --no-cloud
 ```
 
+**Tout installer, y compris les outils optionnels :**
+```bash
+./install.sh --with-extras
+```
+
 ---
 
 ## Installation sur une nouvelle machine
@@ -274,3 +330,7 @@ En résumé : même script, même flux, mais **une clé SSH distincte générée
 - **Arch Linux** : VS Code (build MS), Obsidian et parfois Terraform n'ont pas de paquet officiel dans les dépôts standards — le script recommande/utilise `yay`/`paru` (AUR) ou `flatpak` en fallback, mais ne les installe pas lui-même.
 - **`test_ssh_auth`** dépend du texte retourné par le serveur SSH de l'hébergeur (`successfully authenticated` / `welcome to gitlab`) — un hébergeur Git auto-hébergé (Gitea, Bitbucket Server...) avec un message différent ne sera pas reconnu automatiquement ; utiliser `skip` dans ce cas.
 - Le script suppose une **architecture x86_64 ou arm64/aarch64** pour AWS CLI ; toute autre architecture fait échouer `install_awscli` proprement (message d'erreur, pas de crash).
+- **kubectl, yq, k9s, kubectx** récupèrent toujours la **dernière version stable/release** sur Linux (pas de version épinglée) — un run répété à des dates différentes peut installer des versions différentes.
+- **Docker/groupe `docker`** : l'ajout au groupe ne prend effet qu'après déconnexion/reconnexion (ou reboot) ; tant que ce n'est pas fait, les commandes `docker` nécessitent `sudo` dans la même session.
+- **Claude Code CLI** dépend de Node.js/npm : sur Linux, `npm install -g` avec `sudo` installe dans les répertoires système, ce qui n'est pas la pratique recommandée par npm à long terme (préférer un gestionnaire de version Node comme `nvm` pour éviter `sudo npm install -g` en usage courant), mais reste la méthode la plus simple pour un script d'installation automatisé.
+- **`pip_install`** utilise `--user`, donc les binaires installés (`boto3` n'a pas de binaire CLI, mais d'autres libs pourraient en avoir) se retrouvent dans `~/.local/bin`, qu'il faut avoir dans son `PATH`.
