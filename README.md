@@ -9,7 +9,8 @@ Script bash unique (`install.sh`) qui installe un environnement de dev complet s
 3. [Variables d'environnement](#variables-denvironnement)
 4. [Détail technique par étape](#détail-technique-par-étape)
 5. [Cas d'usage](#cas-dusage)
-6. [Limitations connues](#limitations-connues)
+6. [Installation sur une nouvelle machine](#installation-sur-une-nouvelle-machine)
+7. [Limitations connues](#limitations-connues)
 
 ---
 
@@ -213,6 +214,31 @@ REPO_URL="git@github.com:user/vault.git" ./install.sh --vault-only
 ```bash
 ./install.sh --no-vault
 ```
+
+---
+
+## Installation sur une nouvelle machine
+
+La procédure est **la même** que sur la première machine, avec un point important : **une clé SSH par machine**. On ne recopie jamais une clé privée d'un PC à l'autre — chaque nouvelle machine génère la sienne, qu'on ajoute ensuite en tant que clé *supplémentaire* sur GitHub (les anciennes clés restent valides).
+
+1. **Récupérer le script** sur la nouvelle machine (`git`/`curl` sont presque toujours déjà présents sur Linux/macOS) :
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Abla-Adem/dev-env-installer/main/install.sh -o install.sh
+   chmod +x install.sh
+   ```
+
+2. **Lancer le script** avec l'URL du dépôt du coffre-fort :
+   ```bash
+   REPO_URL="git@github.com:<user>/<vault-repo>.git" ./install.sh
+   ```
+
+3. Le script génère une **nouvelle** clé SSH (propre à cette machine, puisque `~/.ssh/id_ed25519` n'existe pas encore dessus) et l'affiche.
+
+4. **Ajouter cette nouvelle clé publique** sur https://github.com/settings/ssh/new (elle s'ajoute à côté des clés des autres machines, sans rien remplacer).
+
+5. Le script **attend automatiquement** que l'authentification SSH fonctionne (boucle `wait_for_git_ssh`), puis clone le coffre-fort et le configure pour Obsidian dès que c'est bon.
+
+En résumé : même script, même flux, mais **une clé SSH distincte générée et ajoutée à GitHub pour chaque machine**.
 
 ---
 
