@@ -41,15 +41,19 @@ Chaque fonction d'installation est **idempotente** : elle vérifie d'abord si l'
 
 | Flag | Effet |
 |---|---|
-| *(aucun)* | Installe tout, génère la clé SSH, clone le repo et configure le vault |
-| `--ssh-only` | Saute les installations **et** le vault : ne fait que la clé SSH |
-| `--no-vault` | Fait les installations et la clé SSH, mais saute le clonage/vault |
-| `--vault-only` | Saute les installations : ne fait que la clé SSH + clonage/vault |
+| *(aucun)* | Installe tout, génère la clé SSH, configure git, configure AWS/GCP, clone le repo et configure le vault |
+| `--ssh-only` | Saute installations, cloud et vault : ne fait que la clé SSH + identité git |
+| `--no-vault` | Fait tout le reste, mais saute le clonage/vault |
+| `--vault-only` | Saute installations et cloud : ne fait que la clé SSH + identité git + clonage/vault |
+| `--cloud-only` | Saute installations, ssh et vault : ne fait que la configuration interactive AWS + GCP |
+| `--no-cloud` | Fait tout le reste, mais saute la configuration AWS/GCP |
 
-En interne (install.sh:25-33), ces flags positionnent deux booléens :
+En interne (install.sh:26-37), ces flags positionnent quatre booléens :
 
 ```bash
 SKIP_INSTALL=false
+SKIP_SSH=false
+SKIP_CLOUD=false
 SKIP_VAULT=false
 ```
 
@@ -172,7 +176,17 @@ wait_for_git_ssh() {
 
 Boucle `until` : tant que `test_ssh_auth` échoue, le script **attend une action humaine** (ajouter la clé sur GitHub/GitLab), puis retente à chaque appui sur Entrée. Taper `skip` sort de la boucle sans garantie (le clonage suivant pourra échouer si la clé n'est vraiment pas configurée).
 
-### 6. Configuration du coffre-fort Obsidian — `setup_obsidian_vault()` (install.sh:377-428)
+### 6. Configuration interactive AWS / GCP — `configure_aws()` / `configure_gcp()`
+
+Pensées pour être relancées seules, une fois que tu as reçu tes accès (clé AWS, compte GCP) sans devoir tout réinstaller (`./install.sh --cloud-only`).
+
+- **`configure_aws()`** : si `aws` n'est pas installé, skip avec un avertissement. Sinon, teste d'abord `aws sts get-caller-identity` — si ça répond, des identifiants valides existent déjà, skip. Sinon, demande confirmation (`ask_yes_no`) puis lance `aws configure` (le propre flux interactif d'AWS : Access Key ID, Secret Access Key, région par défaut, format de sortie), et revérifie l'identité juste après pour confirmer que ça marche.
+- **`configure_gcp()`** : si `gcloud` n'est pas installé, skip. Sinon, teste `gcloud auth list --filter=status:ACTIVE` — un compte déjà actif fait skip. Sinon, demande confirmation puis lance `gcloud init` (connexion via navigateur + sélection du projet GCP).
+- **`ask_yes_no()`** : petit helper (`read -rp "... [o/N] : "` + regex `^[oOyY]`) réutilisé pour ces deux confirmations.
+
+Ni l'une ni l'autre ne stocke de secret dans le script : `aws configure` écrit dans `~/.aws/credentials`, `gcloud init` gère son propre stockage — comportement natif des CLI, pas géré par `install.sh`.
+
+### 7. Configuration du coffre-fort Obsidian — `setup_obsidian_vault()` (install.sh:377-428)
 
 Étapes dans l'ordre :
 
@@ -213,6 +227,16 @@ REPO_URL="git@github.com:user/vault.git" ./install.sh --vault-only
 **Installer les outils sans toucher à un vault Git :**
 ```bash
 ./install.sh --no-vault
+```
+
+**Configurer AWS/GCP une fois les accès reçus, sans rien réinstaller :**
+```bash
+./install.sh --cloud-only
+```
+
+**Tout faire sauf la configuration cloud (à faire plus tard) :**
+```bash
+./install.sh --no-cloud
 ```
 
 ---

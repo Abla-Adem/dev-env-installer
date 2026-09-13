@@ -6,9 +6,11 @@
 #
 # Usage:
 #   ./install.sh                     # installe tout + clone le repo + configure le vault Obsidian
-#   ./install.sh --ssh-only          # ne fait que la clé SSH (pas d'install, pas de vault)
+#   ./install.sh --ssh-only          # ne fait que la clé SSH (pas d'install, pas de vault, pas de cloud)
 #   ./install.sh --no-vault          # installe tout mais ne clone rien / pas de vault Obsidian
-#   ./install.sh --vault-only        # pas d'install, juste clé SSH + clonage/config du vault
+#   ./install.sh --vault-only        # pas d'install, juste clé SSH + git identity + clonage/config du vault
+#   ./install.sh --cloud-only        # pas d'install/ssh/vault, juste configuration interactive AWS + GCP
+#   ./install.sh --no-cloud          # installe/clone tout mais saute la configuration AWS/GCP
 #   SSH_KEY_COMMENT="you@example.com" REPO_URL="git@github.com:user/repo.git" ./install.sh
 #   GIT_USER_NAME="Ton Nom" GIT_USER_EMAIL="you@example.com" ./install.sh   # évite les prompts interactifs
 #
@@ -18,18 +20,22 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 SSH_KEY_TYPE="ed25519"
-SSH_KEY_COMMENT="${SSH_KEY_COMMENT:-helpjudesavetheworld@gmail.com}"
+SSH_KEY_COMMENT="${SSH_KEY_COMMENT:-ablaadem3@gmail.com}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_${SSH_KEY_TYPE}}"
 REPO_URL="${REPO_URL:-git@github.com:Abla-Adem/sync-personal-doc.git}"
 VAULT_PATH="${VAULT_PATH:-}"
 
 SKIP_INSTALL=false
+SKIP_SSH=false
+SKIP_CLOUD=false
 SKIP_VAULT=false
 for arg in "$@"; do
   case "$arg" in
-    --ssh-only)   SKIP_INSTALL=true; SKIP_VAULT=true ;;
+    --ssh-only)   SKIP_INSTALL=true; SKIP_CLOUD=true; SKIP_VAULT=true ;;
     --no-vault)   SKIP_VAULT=true ;;
-    --vault-only) SKIP_INSTALL=true ;;
+    --vault-only) SKIP_INSTALL=true; SKIP_CLOUD=true ;;
+    --cloud-only) SKIP_INSTALL=true; SKIP_SSH=true; SKIP_VAULT=true ;;
+    --no-cloud)   SKIP_CLOUD=true ;;
   esac
 done
 
@@ -363,6 +369,52 @@ configure_git_identity() {
 }
 
 # ---------------------------------------------------------------------------
+# Configuration interactive AWS / GCP
+# ---------------------------------------------------------------------------
+ask_yes_no() {
+  local prompt="$1" ans
+  read -rp "$prompt [o/N] : " ans
+  [[ "$ans" =~ ^[oOyY] ]]
+}
+
+configure_aws() {
+  if ! have aws; then
+    warn "AWS CLI non installé, configuration AWS ignorée."
+    return
+  fi
+  if aws sts get-caller-identity > /dev/null 2>&1; then
+    log "AWS CLI déjà configuré et fonctionnel (identité vérifiée), skip."
+    return
+  fi
+  if ! ask_yes_no "Configurer AWS CLI maintenant (Access Key ID / Secret Access Key requis) ?"; then
+    log "Configuration AWS ignorée. Relance plus tard avec: ./install.sh --cloud-only"
+    return
+  fi
+  aws configure
+  if aws sts get-caller-identity; then
+    log "AWS configuré avec succès."
+  else
+    warn "La vérification AWS a échoué, vérifie tes identifiants (aws configure)."
+  fi
+}
+
+configure_gcp() {
+  if ! have gcloud; then
+    warn "gcloud CLI non installé, configuration GCP ignorée."
+    return
+  fi
+  if gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
+    log "gcloud déjà authentifié, skip."
+    return
+  fi
+  if ! ask_yes_no "Configurer gcloud (GCP) maintenant (connexion via navigateur + choix du projet) ?"; then
+    log "Configuration GCP ignorée. Relance plus tard avec: ./install.sh --cloud-only"
+    return
+  fi
+  gcloud init
+}
+
+# ---------------------------------------------------------------------------
 # Attente : vérifie que la clé SSH est bien reconnue par l'hébergeur Git
 # ---------------------------------------------------------------------------
 test_ssh_auth() {
@@ -477,8 +529,15 @@ main() {
     install_gcloud
   fi
 
-  generate_ssh_key
-  configure_git_identity
+  if [[ "$SKIP_SSH" == false ]]; then
+    generate_ssh_key
+    configure_git_identity
+  fi
+
+  if [[ "$SKIP_CLOUD" == false ]]; then
+    configure_aws
+    configure_gcp
+  fi
 
   if [[ "$SKIP_VAULT" == false ]]; then
     setup_obsidian_vault
